@@ -1,5 +1,0 @@
-dnslib
-joblib
-numpy
-scikit-learn
-matplotlib
