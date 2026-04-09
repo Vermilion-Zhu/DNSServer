@@ -1,2 +1,3 @@
 log/
 .venv/
+model_training/__pycache__
