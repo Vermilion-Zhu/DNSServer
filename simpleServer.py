@@ -34,9 +34,7 @@ WHITELIST = {
     "github.com.", "www.github.com.", "stackoverflow.com.", "www.stackoverflow.com.",
     "baidu.com.", "www.baidu.com.", "taobao.com.", "www.taobao.com.",
     "qq.com.", "www.qq.com.", "weibo.com.", "www.weibo.com.",
-    "bilibili.com.", "www.bilibili.com.", "zhihu.com.", "www.zhihu.com.",
-    # 本地测试域名
-    "local.test.", "ipv6.test.", "mail.test.", "info.test.",
+    "bilibili.com.", "www.bilibili.com.", "zhihu.com.", "www.zhihu.com."
     # 可以在这里添加更多白名单域名
 }
 
@@ -116,8 +114,8 @@ class HybridResolver:
                         # 根据配置返回拦截响应
                         if DGA_ACTION == "SINKHOLE":
                             return self._build_sinkhole_reply(request, qname, qtype)
-                        else:  # REFUSE
-                            return self._build_refuse_reply(request)
+                        '''else:  # REFUSE
+                            return self._build_refuse_reply(request)'''
                     else:
                         mylogf(f'[DGA PASS] {qname} - confidence: {confidence:.2%}')
             
@@ -237,12 +235,12 @@ class HybridResolver:
         
         return reply
     
-    def _build_refuse_reply(self, request):
+    '''def _build_refuse_reply(self, request):
         """构建拒绝响应"""
         reply = request.reply()
         reply.header.rcode = RCODE.REFUSED
         return reply
-        
+    '''
 
 if __name__ == "__main__":
 
