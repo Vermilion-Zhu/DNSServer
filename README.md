@@ -1,5 +1,8 @@
 # DNSServer
 
+## 说明
+`pip install -r requirements.txt`安装依赖，如需训练查看模型训练图自行安装matplotlib
+
 **2026/4/7**
 这目前还是一个基础版本的DNS服务器，用AI写的，但是已经可以做到向上转发并且查询了
 下面是一些使用方法，作为参考：
