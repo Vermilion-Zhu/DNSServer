@@ -2,14 +2,13 @@
 #A simple DNS server that supports A, AAAA, CNAME requests
 #REMEMBER TO DISABLE .ps1 SCRIPTS AFTER THE EXPERIMENT!
 
+from dns_cache import DNSCache
 from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, RCODE, SOA
 from dnslib.server import DNSServer, DNSLogger
-import socket, os, time, sys
+import socket, os, time, sys, threading
 
-# 添加model_training目录到Python路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'model_training'))
 try:
-    import dga_runtime
+    from model_training import dga_runtime
     DGA_AVAILABLE = True
 except ImportError:
     DGA_AVAILABLE = False
@@ -46,7 +45,7 @@ WHITELIST_SUFFIXES = {
 
 #Keep in track of the requests and replies, and print them out at the console
 def mylogf(whattolog:str):
-    with open('log\\' + LOGNAME, 'a') as f:
+    with open(os.path.join('log', LOGNAME), 'a') as f:
         f.writelines(whattolog + '\n')
     print(whattolog)
 
@@ -61,12 +60,14 @@ class HybridResolver:
             # format: <site> : (<type>, <address>)      not good enough :(
         }
         #A temporary cache, waiting for an alternative...(TODO: Maybe use the sqlite3 library?)
-        self.newrecord = {
+        """self.newrecord = {
             QTYPE.A:{'local.test.':'0.0.0.0'},
             QTYPE.AAAA:{'local.test.':'2001:db8::1'},
             QTYPE.CNAME:{},
             QTYPE.SOA:{},
-        }
+        }"""
+        #Update:
+        self.cache = DNSCache("dns_cache.db")
 
         #Calculate the processing time and total amount of requests
         self.processing_time = 0.
@@ -86,6 +87,17 @@ class HybridResolver:
                 f.write(f'Whitelist: {len(WHITELIST)} domains, {len(WHITELIST_SUFFIXES)} suffixes\n')
             else:
                 f.write(f'DGA Detection: DISABLED\n')
+        # start periodic cache cleanup thread
+        self._stop_cleaner = threading.Event()
+        def _periodic_cleanup():
+            while not self._stop_cleaner.wait(60):
+                try:
+                    self.cache.clear_expired()
+                except Exception:
+                    pass
+        t = threading.Thread(target=_periodic_cleanup, daemon=True)
+        t.start()
+        self._cleaner_thread = t
     
     #The main function of the resolver, which would be called by the DNSServer object.
     def resolve(self, request, handler):
@@ -121,13 +133,19 @@ class HybridResolver:
             
             # ===== 正常解析流程 =====
             #Check local records
-            if qname in self.newrecord[qtype]:
+            """if qname in self.newrecord[qtype]:
                 rdata = self.newrecord[qtype][qname]
-                return self._build_reply(request, qname, qtype, rdata)
+                return self._build_reply(request, qname, qtype, rdata)"""
+            #Update:
+            cached = self.cache.get(qname, qtype)
+            if cached:
+                rdata, remaining_ttl = cached
+                mylogf(f'[CACHE HIT] {qname} -> {rdata} (剩余TTL: {remaining_ttl}s)')
+                return self._build_reply(request, qname, qtype, rdata, remaining_ttl)
             #If the authority server does not find the CNAME record, it will return a SOA record as reply in the Authority Section
-            elif qname in self.newrecord[QTYPE.SOA]:
-                rname, rdata = self.newrecord[QTYPE.SOA][qname]
-                return self._build_reply(request, rname, QTYPE.SOA, rdata)
+            #elif qname in self.newrecord[QTYPE.SOA]:
+            #    rname, rdata = self.newrecord[QTYPE.SOA][qname]
+            #   return self._build_reply(request, rname, QTYPE.SOA, rdata)
 
             '''if qname in self.records:
                 rtype, rdata = self.records[qname]
@@ -148,7 +166,7 @@ class HybridResolver:
         return qtype == type_map.get(rtype_str)
     
     #Build replies according to the query type
-    def _build_reply(self, request, qname, qtype, rdata):
+    '''def _build_reply(self, request, qname, qtype, rdata):
         reply = request.reply()
         
         if qtype == QTYPE.A:
@@ -163,6 +181,27 @@ class HybridResolver:
         elif qtype == QTYPE.SOA:
             reply.add_auth(RR(qname, QTYPE.SOA, rdata=rdata, ttl=60)) 
         
+        return reply'''
+    #Update:
+    def _build_reply(self, request, qname, qtype, rdata, ttl=60):
+        reply = request.reply()
+        if qtype == QTYPE.A:
+            if isinstance(rdata, list):
+                for rd in rdata:
+                    reply.add_answer(RR(qname, QTYPE.A, rdata=A(rd), ttl=ttl))
+            else:
+                reply.add_answer(RR(qname, QTYPE.A, rdata=A(rdata), ttl=ttl))
+        elif qtype == QTYPE.AAAA:
+            if isinstance(rdata, list):
+                for rd in rdata:
+                    reply.add_answer(RR(qname, QTYPE.AAAA, rdata=AAAA(rd), ttl=ttl))
+            else:
+                reply.add_answer(RR(qname, QTYPE.AAAA, rdata=AAAA(rdata), ttl=ttl))
+        elif qtype == QTYPE.MX:
+            pref, mx = rdata if isinstance(rdata, tuple) else (10, rdata)
+            reply.add_answer(RR(qname, QTYPE.MX, rdata=MX(pref, mx), ttl=ttl))
+        elif qtype == QTYPE.TXT:
+            reply.add_answer(RR(qname, QTYPE.TXT, rdata=TXT(rdata), ttl=ttl))
         return reply
     
     #Use sockets to perform a query to higher-level DNS servers
@@ -181,15 +220,43 @@ class HybridResolver:
             sock.close()
 
     #Once a new record appears, add it to the cache
-    def add_records(self, reply, qname:str):
+    """def add_records(self, reply, qname:str):
         for rr in reply.rr:
             mylogf(f'Adding new record : {rr.rtype} {rr.rname} {rr.rdata}')
             self.newrecord[rr.rtype][qname] = str(rr.rdata)
         if reply.auth:
             for rr in reply.auth:
                 mylogf(f'Adding new record : {rr.rtype} {rr.rname} {rr.rdata} from SOA')
-                self.newrecord[rr.rtype][qname] = (rr.rname, rr.rdata)
-    
+                self.newrecord[rr.rtype][qname] = (rr.rname, rr.rdata)"""
+    #Update:
+    def add_records(self, reply, qname:str):
+        # collect A and AAAA records and cache all values per type
+        a_list = []
+        a_ttl = None
+        aaaa_list = []
+        aaaa_ttl = None
+        for rr in reply.rr:
+            if rr.rtype == QTYPE.A:
+                a_list.append(str(rr.rdata))
+                a_ttl = rr.ttl if a_ttl is None else min(a_ttl, rr.ttl)
+            elif rr.rtype == QTYPE.AAAA:
+                aaaa_list.append(str(rr.rdata))
+                aaaa_ttl = rr.ttl if aaaa_ttl is None else min(aaaa_ttl, rr.ttl)
+
+        if a_list:
+            self.cache.set(qname, QTYPE.A, a_list, a_ttl or 60)
+            mylogf(f'[CACHE SET] {qname} -> {a_list} (TTL={a_ttl or 60}s)')
+        if aaaa_list:
+            self.cache.set(qname, QTYPE.AAAA, aaaa_list, aaaa_ttl or 60)
+            mylogf(f'[CACHE SET] {qname} -> {aaaa_list} (TTL={aaaa_ttl or 60}s)')
+
+        # fallback: cache CNAME if present and matches qname
+        if not (a_list or aaaa_list):
+            for rr in reply.rr:
+                if rr.rtype == QTYPE.CNAME and str(rr.rname) == qname:
+                    self.cache.set(qname, QTYPE.CNAME, str(rr.rdata), rr.ttl)
+                    mylogf(f'[CACHE SET CNAME] {qname} -> {rr.rdata}')
+                    break
     # ===== DGA检测相关方法 =====
     
     def _is_whitelisted(self, qname):
@@ -253,6 +320,15 @@ if __name__ == "__main__":
     try:      
         server.start()
     except KeyboardInterrupt:
+        # stop background cleaner and close cache
+        try:
+            resolver._stop_cleaner.set()
+        except Exception:
+            pass
+        try:
+            resolver.cache.close()
+        except Exception:
+            pass
         #The average processing time for a request is about 0.2 sec. 
         #With cache in hand, we can accelerate it to lesser than 0.01 sec!
         #How to manage it is another problem, though...
