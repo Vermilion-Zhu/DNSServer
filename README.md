@@ -36,11 +36,14 @@
 修复问题：
 - 上一版本中无论向上转发的请求是否收到正确的响应都会进行缓存，现在仅仅在符合预期的情况下才会缓存：
     ```
-    if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not reply.tc and reply.rr:
+    if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not getattr(reply.header, 'tc', False) and getattr(reply, 'rr', None):
         self.add_records(reply, qname)
     else:
         mylogf(f'[UPSTREAM ERROR] {qname} - RCODE: {reply.header.rcode if getattr(reply, "header", None) else "N/A"}, TC: {getattr(reply, "tc", "N/A")}, RR count: {len(getattr(reply, "rr", []))}')
     ```
     一点说明。增加了“正确响应才缓存”的判断后，运行 wtest.ps1 会打印很多 [UPSTREAM ERROR]，原因是这些站点没有 ipv6，是正常情况。
 - 上一次的 DGA 模块导入还有问题。把 model_training/dga_runtime.py 中导入包内模块改成相对导入了（加上 "from ."），如果需要把模块作为脚本测试，需要在 python 命令后加 "-m" 参数
+新增功能：
+- 实现客户端查询工具 ./tools/dns_query/dns_client.py ，使用方法：python dns_client.py [@server] name [type]
+  后续进一步测试一下，如果没有问题可以用 pyinstaller 打包为一个 .exe 使用。
 ———— by cjq
