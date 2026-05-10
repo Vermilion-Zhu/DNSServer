@@ -3,9 +3,9 @@
 #REMEMBER TO DISABLE .ps1 SCRIPTS AFTER THE EXPERIMENT!
 
 from dns_cache import DNSCache
-from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, RCODE, SOA
+from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, RCODE
 from dnslib.server import DNSServer, DNSLogger
-import socket, os, time, sys, threading
+import socket, os, time, threading
 
 try:
     from model_training import dga_runtime
@@ -59,14 +59,7 @@ class HybridResolver:
             "info.test.": ("TXT", "This is a test record"),
             # format: <site> : (<type>, <address>)      not good enough :(
         }
-        #A temporary cache, waiting for an alternative...(TODO: Maybe use the sqlite3 library?)
-        """self.newrecord = {
-            QTYPE.A:{'local.test.':'0.0.0.0'},
-            QTYPE.AAAA:{'local.test.':'2001:db8::1'},
-            QTYPE.CNAME:{},
-            QTYPE.SOA:{},
-        }"""
-        #Update:
+        # A temporary cache placeholder (legacy local-record support removed)
         self.cache = DNSCache("dns_cache.db")
 
         #Calculate the processing time and total amount of requests
@@ -126,32 +119,18 @@ class HybridResolver:
                         # 根据配置返回拦截响应
                         if DGA_ACTION == "SINKHOLE":
                             return self._build_sinkhole_reply(request, qname, qtype)
-                        '''else:  # REFUSE
-                            return self._build_refuse_reply(request)'''
+                        # (REFUSE behavior removed)
                     else:
                         mylogf(f'[DGA PASS] {qname} - confidence: {confidence:.2%}')
             
             # ===== 正常解析流程 =====
-            #Check local records
-            """if qname in self.newrecord[qtype]:
-                rdata = self.newrecord[qtype][qname]
-                return self._build_reply(request, qname, qtype, rdata)"""
-            #Update:
+            # (legacy local-record handling removed)
             cached = self.cache.get(qname, qtype)
             if cached:
                 rdata, remaining_ttl = cached
                 mylogf(f'[CACHE HIT] {qname} -> {rdata} (剩余TTL: {remaining_ttl}s)')
                 return self._build_reply(request, qname, qtype, rdata, remaining_ttl)
-            #If the authority server does not find the CNAME record, it will return a SOA record as reply in the Authority Section
-            #elif qname in self.newrecord[QTYPE.SOA]:
-            #    rname, rdata = self.newrecord[QTYPE.SOA][qname]
-            #   return self._build_reply(request, rname, QTYPE.SOA, rdata)
-
-            '''if qname in self.records:
-                rtype, rdata = self.records[qname]
-                if self._match_type(qtype, rtype):
-                    return self._build_reply(request, qname, qtype, rdata)'''
-            
+            # continue to upstream lookup
             #Foward to upstream
             reply = self._forward(request)
             self.add_records(reply, qname)
@@ -165,24 +144,7 @@ class HybridResolver:
         type_map = {"A": QTYPE.A, "AAAA": QTYPE.AAAA, "MX": QTYPE.MX, "TXT": QTYPE.TXT}
         return qtype == type_map.get(rtype_str)
     
-    #Build replies according to the query type
-    '''def _build_reply(self, request, qname, qtype, rdata):
-        reply = request.reply()
-        
-        if qtype == QTYPE.A:
-            reply.add_answer(RR(qname, QTYPE.A, rdata=A(rdata), ttl=60))
-        elif qtype == QTYPE.AAAA:
-            reply.add_answer(RR(qname, QTYPE.AAAA, rdata=AAAA(rdata), ttl=60))
-        elif qtype == QTYPE.MX:
-            pref, mx = rdata
-            reply.add_answer(RR(qname, QTYPE.MX, rdata=MX(pref, mx), ttl=60))
-        elif qtype == QTYPE.TXT:
-            reply.add_answer(RR(qname, QTYPE.TXT, rdata=TXT(rdata), ttl=60))
-        elif qtype == QTYPE.SOA:
-            reply.add_auth(RR(qname, QTYPE.SOA, rdata=rdata, ttl=60)) 
-        
-        return reply'''
-    #Update:
+    # Build replies according to the query type
     def _build_reply(self, request, qname, qtype, rdata, ttl=60):
         reply = request.reply()
         if qtype == QTYPE.A:
@@ -219,16 +181,7 @@ class HybridResolver:
         finally:
             sock.close()
 
-    #Once a new record appears, add it to the cache
-    """def add_records(self, reply, qname:str):
-        for rr in reply.rr:
-            mylogf(f'Adding new record : {rr.rtype} {rr.rname} {rr.rdata}')
-            self.newrecord[rr.rtype][qname] = str(rr.rdata)
-        if reply.auth:
-            for rr in reply.auth:
-                mylogf(f'Adding new record : {rr.rtype} {rr.rname} {rr.rdata} from SOA')
-                self.newrecord[rr.rtype][qname] = (rr.rname, rr.rdata)"""
-    #Update:
+    # Once a new record appears, add it to the cache
     def add_records(self, reply, qname:str):
         # collect A and AAAA records and cache all values per type
         a_list = []
@@ -302,12 +255,7 @@ class HybridResolver:
         
         return reply
     
-    '''def _build_refuse_reply(self, request):
-        """构建拒绝响应"""
-        reply = request.reply()
-        reply.header.rcode = RCODE.REFUSED
-        return reply
-    '''
+    # (refuse reply helper removed; using sinkhole or normal replies)
 
 if __name__ == "__main__":
 
