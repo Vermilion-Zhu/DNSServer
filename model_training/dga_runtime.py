@@ -3,7 +3,7 @@ import os
 import joblib
 import numpy as np
 
-import train_dga_model as fe
+from . import train_dga_model as fe
 
 # DEFAULT_MODEL_PATH = "dga_model_ng128_n3.pkl"
 DEFAULT_MODEL_PATH = "artifacts/models/active/dga_model_light_markov_100k_v2.pkl"

@@ -5,7 +5,7 @@
 from dns_cache import DNSCache
 from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, RCODE
 from dnslib.server import DNSServer, DNSLogger
-import socket, os, time, threading
+import socket, os, time, threading, traceback
 
 try:
     from model_training import dga_runtime
@@ -86,8 +86,8 @@ class HybridResolver:
             while not self._stop_cleaner.wait(60):
                 try:
                     self.cache.clear_expired()
-                except Exception:
-                    pass
+                except Exception as e:
+                    mylogf(f'[CLEANUP ERROR] {e}\n' + traceback.format_exc())
         t = threading.Thread(target=_periodic_cleanup, daemon=True)
         t.start()
         self._cleaner_thread = t
@@ -128,12 +128,15 @@ class HybridResolver:
             cached = self.cache.get(qname, qtype)
             if cached:
                 rdata, remaining_ttl = cached
-                mylogf(f'[CACHE HIT] {qname} -> {rdata} (剩余TTL: {remaining_ttl}s)')
+                mylogf(f'[CACHE HIT] {qname} -> {rdata} (remaining TTL: {remaining_ttl}s)')
                 return self._build_reply(request, qname, qtype, rdata, remaining_ttl)
             # continue to upstream lookup
             #Foward to upstream
             reply = self._forward(request)
-            self.add_records(reply, qname)
+            if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not getattr(reply, 'tc', False) and getattr(reply, 'rr', None):
+                self.add_records(reply, qname)
+            else:
+                mylogf(f'[UPSTREAM ERROR] {qname} - RCODE: {reply.header.rcode if getattr(reply, "header", None) else "N/A"}, TC: {getattr(reply, "tc", "N/A")}, RR count: {len(getattr(reply, "rr", []))}')
             return reply
         finally:
             self.processing_time += time.time() - start
@@ -174,7 +177,8 @@ class HybridResolver:
             sock.sendto(request.pack(), (self.upstream, 53))
             data, _ = sock.recvfrom(512)
             return DNSRecord.parse(data)
-        except:
+        except Exception as e:
+            mylogf(f'[FORWARD ERROR] {e}\n' + traceback.format_exc())
             reply = request.reply()
             reply.header.rcode = RCODE.SERVFAIL
             return reply

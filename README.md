@@ -22,10 +22,24 @@
 
 **2026/4/30**
 将 simpleServer.py 替换为了加入 sqlite3 的版本（由 mjh 完成），然后我修复了一些问题：
-- SQL 参数错误：dns.cache.py 中 self.conn.execute("DELETE FROM cache WHERE expire <= ?", now) 改为 self.conn.execute("DELETE FROM cache WHERE expire <= ?", (now,))
-- 模块导入错误：dga_runtime 的导入有问题，我把 sys.path 的设置删掉了，因为 dga_runtime.py 在 simpleServer.py 的同级文件夹下，用 from ... import ... 导入就够了（因为现在的 py 不要求有 __init__.py 来识别包了）。后面我们只要保证不更改整个项目的目录结构就不会影响这个模块的导入。
-- SQLite 并发安全：引入锁保护，主要是解决 DNSServer 多个线程调用 DNSCache 引发数据库锁错误的问题。由于是 AI 发现和解决的，我不太清楚技术细节
-- 缓存策略：之前的 add_records 只会缓存响应中的第一个 A/AAAA 记录。现在可以兼容一问多答了，具体可以通过 wtest.ps1 中 baidu.com d 查询现在会返回 4 条记录来验证。后续我们可以从这里入手实现负载均衡（也就是对于不同的客户端，返回不同的记录，而非 4 条全返回）
+- SQL 参数：dns.cache.py 中 self.conn.execute("DELETE FROM cache WHERE expire <= ?", now) 改为 self.conn.execute("DELETE FROM cache WHERE expire <= ?", (now,))
+- ~~模块导入：dga_runtime 的导入，把 sys.path 的设置删掉。因为 dga_runtime.py 在 simpleServer.py 的同级文件夹下，换用 from ... import ... 导入即可。~~
+- SQLite 并发安全：引入锁保护。因为新增了一个定期清理缓存的线程，需要避免两个函数对数据库的资源竞争。具体的线程创建和释放在这些地方：
+  - class HybridResolver 构造函数中的 self._stop_cleaner 和 t。线程 t 开始进入 等待-清理缓存的循环中。
+  - if __name__ == '__main__' 下 except KeyboardInterrupt 的  resolver._stop_cleaner.set()。会使得 _periodic_cleanup 中 while 循环终止，进而函数结束，释放线程 t 的资源。
+- 缓存策略：之前的 add_records 只会缓存响应中的第一个 A/AAAA 记录。现在可以兼容一问多答了。（可通过 wtest.ps1 中 baidu.com d 查询现在会返回 4 条记录来验证）
 - 调用清理：clear_expired() 在之前虽然定义但是没有被调用过；resolver.cache_close() 也新增显式调用
-- mylogf 的路径用 os.path.join 替代字符串连接，兼容其他系统的格式
+- 日志路径兼容：mylogf 的路径用 os.path.join 替代字符串连接，兼容其他系统的格式
+———— by cjq
+
+**2026/5/10**
+修复问题：
+- 上一版本中无论向上转发的请求是否收到正确的响应都会进行缓存，现在仅仅在符合预期的情况下才会缓存：
+    ```
+    if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not reply.tc and reply.rr:
+        self.add_records(reply, qname)
+    else:
+        mylogf(f'[UPSTREAM ERROR] {qname} - RCODE: {reply.header.rcode if getattr(reply, "header", None) else "N/A"}, TC: {getattr(reply, "tc", "N/A")}, RR count: {len(getattr(reply, "rr", []))}')
+    ```
+- 上一次的 DGA 模块导入还有问题。把 model_training/dga_runtime.py 中导入包内模块改成相对导入了（加上 "from ."），如果需要把模块作为脚本测试，需要在 python 命令后加 "-m" 参数
 ———— by cjq

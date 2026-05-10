@@ -3,8 +3,8 @@ import time
 import zipfile
 import io
 
-import dga_runtime
-import train_dga_model as fe
+from . import dga_runtime
+from . import train_dga_model as fe
 
 
 def iter_ranked_csv_in_zip(zip_path, limit):

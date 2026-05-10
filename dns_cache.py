@@ -31,21 +31,20 @@ class DNSCache:
                 (domain, qtype)
             )
             row = cur.fetchone()
-        if row:
-            rdata, ttl, expire = row
-            try:
-                # rdata may be a JSON-encoded list or object
-                rdata_parsed = json.loads(rdata)
-                rdata = rdata_parsed
-            except Exception:
-                # keep original string when not JSON
-                pass
+            if not row:
+                return None
+            rdata_str, ttl, expire = row
             now = int(time.time())
-            if expire > now:
-                remaining_ttl = expire - now
-                return rdata, remaining_ttl
-            self.delete(domain, qtype)
-        return None
+            if expire <= now:
+                self.conn.execute("DELETE FROM cache WHERE domain=? AND qtype=?", (domain, qtype))
+                self.conn.commit()
+                return None
+            remaining_ttl = expire - now
+        try:
+            rdata = json.loads(rdata_str)
+        except Exception:
+            rdata = rdata_str
+        return rdata, remaining_ttl
     
     def set(self, domain, qtype, rdata, ttl):
         now = int(time.time())

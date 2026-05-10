@@ -1,7 +1,0 @@
-__pycache__/
-.vscode/
-log/
-.venv/
-model_training/__pycache__
-dns_cache.db
-.gitignore

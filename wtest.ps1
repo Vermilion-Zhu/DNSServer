@@ -17,7 +17,7 @@ for ($i = 1; $i -le 5; $i++){
             python -m dnslib.client --server ${address}:${port} $site $qt
             
             if ($LASTEXITCODE -eq 0) {
-                Write-Host "Test for $site ($qt) successed!" -ForegroundColor Green
+                Write-Host "Test for $site ($qt) succeeded!" -ForegroundColor Green
             } else {
                 Write-Host "Test for $site ($qt) failed!" -ForegroundColor Red
             }
