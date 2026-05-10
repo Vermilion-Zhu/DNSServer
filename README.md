@@ -41,5 +41,6 @@
     else:
         mylogf(f'[UPSTREAM ERROR] {qname} - RCODE: {reply.header.rcode if getattr(reply, "header", None) else "N/A"}, TC: {getattr(reply, "tc", "N/A")}, RR count: {len(getattr(reply, "rr", []))}')
     ```
+    一点说明。增加了“正确响应才缓存”的判断后，运行 wtest.ps1 会打印很多 [UPSTREAM ERROR]，原因是这些站点没有 ipv6，是正常情况。
 - 上一次的 DGA 模块导入还有问题。把 model_training/dga_runtime.py 中导入包内模块改成相对导入了（加上 "from ."），如果需要把模块作为脚本测试，需要在 python 命令后加 "-m" 参数
 ———— by cjq

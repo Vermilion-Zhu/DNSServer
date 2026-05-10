@@ -133,7 +133,7 @@ class HybridResolver:
             # continue to upstream lookup
             #Foward to upstream
             reply = self._forward(request)
-            if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not getattr(reply, 'tc', False) and getattr(reply, 'rr', None):
+            if getattr(reply, 'header', None) and reply.header.rcode == RCODE.NOERROR and not getattr(reply.header, 'tc', False) and getattr(reply, 'rr', None):
                 self.add_records(reply, qname)
             else:
                 mylogf(f'[UPSTREAM ERROR] {qname} - RCODE: {reply.header.rcode if getattr(reply, "header", None) else "N/A"}, TC: {getattr(reply, "tc", "N/A")}, RR count: {len(getattr(reply, "rr", []))}')
