@@ -1,3 +1,4 @@
+dnspython
 dnslib
 joblib
 numpy
