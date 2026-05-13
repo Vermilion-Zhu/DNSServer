@@ -5,11 +5,11 @@
 from dns_cache import DNSCache
 from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, CNAME, RCODE
 from dnslib.server import DNSServer, DNSLogger as DnslibLogger
-import socket, os, time, threading, traceback
+import argparse, socket, os, time, threading, traceback
 
 # 共享配置（从 config.py 导入）
 from config import (
-    PORT, ADDRESS,
+    PORT, ADDRESS, UPSTREAM_DNS,
     ENABLE_DGA_DETECTION, DGA_THRESHOLD, DGA_ACTION,
     WHITELIST, WHITELIST_SUFFIXES, is_whitelisted,
 )
@@ -313,11 +313,16 @@ class HybridResolver:
     # (refuse reply helper removed; using sinkhole or normal replies)
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Simple DNS Server with DGA detection")
+    parser.add_argument("--upstream", default=UPSTREAM_DNS,
+                        help=f"Upstream DNS server (default: {UPSTREAM_DNS})")
+    args = parser.parse_args()
 
     #Initiating resolver and the DNSServer object
-    resolver = HybridResolver()
+    resolver = HybridResolver(upstream=args.upstream)
     server = DNSServer(resolver, port=PORT, address=ADDRESS, logger=DnslibLogger(logf=_dnslib_logf))
-    logger.info("SERVER", f"DNS Server running on {ADDRESS}:{PORT}")
+    logger.info("SERVER", f"DNS Server running on {ADDRESS}:{PORT}, upstream: {args.upstream}")
 
     #Start the server until being terminated by the keyboard
     try:      
