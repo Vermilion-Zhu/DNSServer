@@ -3,7 +3,7 @@ log/
 .clinerules
 dns_cache.db
 .roo
-_pycache_/
+__pycache__/
 model_training/__pycache__
 tools/dga_gui/__pycache__/
 tools/dns_query/__pycache__/
