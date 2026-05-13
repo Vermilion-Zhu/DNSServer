@@ -1,2 +1,4 @@
 log/
 .venv/
+.clinerules
+dns_cache.db
