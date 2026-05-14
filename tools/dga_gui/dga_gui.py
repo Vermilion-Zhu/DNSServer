@@ -107,15 +107,7 @@ class DGAGuiApp:
         fr = ttk.LabelFrame(self.root, text=" 输入配置 ", style="S.TLabelframe", padding=10)
         fr.pack(fill=tk.X, padx=10, pady=(10, 4))
 
-        # Mode
-        self.mode_var = tk.StringVar(value="single")
-        r0 = ttk.Frame(fr); r0.pack(fill=tk.X, pady=(0, 6))
-        ttk.Radiobutton(r0, text="单个域名", variable=self.mode_var, value="single",
-                        command=self._toggle_mode).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(r0, text="JSON 文件批量", variable=self.mode_var, value="batch",
-                        command=self._toggle_mode).pack(side=tk.LEFT)
-
-        # Single
+        # 单域名输入（始终可见）
         self.single_fr = ttk.Frame(fr); self.single_fr.pack(fill=tk.X, pady=2)
         ttk.Label(self.single_fr, text="域名:").pack(side=tk.LEFT)
         self.domain_var = tk.StringVar()
@@ -149,12 +141,7 @@ class DGAGuiApp:
         ttk.Combobox(self.batch_fr, textvariable=self.qtype_var,
                      values=["A", "AAAA", "CNAME"], width=8,
                      state="readonly").pack(side=tk.LEFT, padx=4)
-
-    def _toggle_mode(self, *_):
-        if self.mode_var.get() == "single":
-            self.batch_fr.pack_forget(); self.single_fr.pack(fill=tk.X, pady=2)
-        else:
-            self.single_fr.pack_forget(); self.batch_fr.pack(fill=tk.X, pady=2)
+        self.batch_fr.pack(fill=tk.X, pady=(4, 0))
 
     def _on_thresh(self, *_):
         self.thresh_lbl.config(text=f"{self.threshold_var.get():.2f}")
@@ -167,10 +154,11 @@ class DGAGuiApp:
     # ── Buttons ────────────────────────────────────────────────────
     def _build_buttons(self):
         f1 = ttk.Frame(self.root); f1.pack(fill=tk.X, padx=10, pady=(4, 2))
-        self.btn_query = ttk.Button(f1, text="🔍 查询&检测", command=self._run_query_detect)
+        self.btn_query = ttk.Button(f1, text="🔍 单域名查询", command=self._run_query_detect)
         self.btn_query.pack(side=tk.LEFT, padx=4)
-        self.btn_dga = ttk.Button(f1, text="📊 仅DGA检测", command=self._run_dga_only)
-        self.btn_dga.pack(side=tk.LEFT, padx=4)
+        self.btn_batch = ttk.Button(f1, text="📦 批量查询", command=self._run_batch)
+        self.btn_batch.pack(side=tk.LEFT, padx=4)
+        ttk.Separator(f1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         ttk.Button(f1, text="🗑️ 清空", command=self._clear).pack(side=tk.LEFT, padx=4)
         ttk.Button(f1, text="💾 导出", command=self._export).pack(side=tk.LEFT, padx=4)
         self.btn_cancel = ttk.Button(f1, text="⏹ 取消", command=self._cancel_task, state=tk.DISABLED)
@@ -205,7 +193,7 @@ class DGAGuiApp:
         self._task_running = True
         self._cancel_event.clear()
         self.btn_query.config(state=tk.DISABLED)
-        self.btn_dga.config(state=tk.DISABLED)
+        self.btn_batch.config(state=tk.DISABLED)
         self.btn_cancel.config(state=tk.NORMAL)
         if total > 0:
             self.progress_bar.config(mode="determinate", maximum=total, value=0)
@@ -220,7 +208,7 @@ class DGAGuiApp:
         self._task_running = False
         self._cancel_event.clear()
         self.btn_query.config(state=tk.NORMAL)
-        self.btn_dga.config(state=tk.NORMAL)
+        self.btn_batch.config(state=tk.NORMAL)
         self.btn_cancel.config(state=tk.DISABLED)
         self.progress_bar.stop()
         self.progress_bar.config(mode="determinate", value=0, maximum=1)
@@ -334,7 +322,9 @@ class DGAGuiApp:
 
     @staticmethod
     def _cache_hit_text(cache_hit):
-        if cache_hit is True:
+        if cache_hit == "neg":
+            return "✗ NXDOMAIN"
+        elif cache_hit is True or cache_hit == "pos":
             return "✓ 命中"
         elif cache_hit is False:
             return "✗ 上游"
@@ -474,7 +464,12 @@ class DGAGuiApp:
             messagebox.showinfo("提示", "有任务正在运行，请等待或取消"); return
         if not self._check_server_alive():
             messagebox.showwarning("服务器", "本地 DNS 服务器未运行，请重启"); return
-        if self.mode_var.get() == "batch": return self._run_batch()
+        # 单域名查询前：清 Treeview（上次批量残留）+ DGA 标签
+        for i in self.tree.get_children(): self.tree.delete(i)
+        self._batch_results.clear()
+        self.lbl_domain.config(text="域名: —"); self.lbl_score.config(text="DGA 分数: —", foreground="black")
+        self.lbl_verdict.config(text="判定: —", style="TLabel")
+
         domain = self.domain_var.get().strip()
         if not domain: messagebox.showwarning("错误", "请输入域名"); return
         qtype = self.qtype_var.get(); thr = self.threshold_var.get()
@@ -516,30 +511,6 @@ class DGAGuiApp:
             logger.info("DGA", f"{domain} → {float(score):.4f} ({'DGA' if is_dga else '正常'})")
         self._set_dga_single(domain, score, is_dga)
 
-    def _run_dga_only(self):
-        if self._task_running:
-            messagebox.showinfo("提示", "有任务正在运行，请等待或取消"); return
-        if self.mode_var.get() == "batch": return self._run_batch()
-        domain = self.domain_var.get().strip()
-        if not domain: messagebox.showwarning("错误", "请输入域名"); return
-        thr = self.threshold_var.get()
-        qname_dot = domain if domain.endswith(".") else domain + "."
-        if self.use_wl_var.get() and is_whitelisted(qname_dot):
-            logger.info("WHITELIST", domain); self._set_dga_single(domain, None, False, True); return
-        logger.info("DGA", f"检测: {domain}...")
-        self._set_busy()
-
-        def _do():
-            is_dga, score = check_dga(domain, thr)
-            if self._cancel_event.is_set():
-                self.root.after(0, self._set_idle)
-                return
-            def _on_done():
-                self._set_dga_single(domain, score, is_dga)
-                self._set_idle()
-            self.root.after(0, _on_done)
-        threading.Thread(target=_do, daemon=True).start()
-
     def _run_batch(self):
         if self._task_running:
             messagebox.showinfo("提示", "有任务正在运行，请等待或取消"); return
@@ -556,8 +527,13 @@ class DGAGuiApp:
         except Exception as e: logger.error("BATCH", f"JSON 错误: {e}"); return
         if not domains: logger.warn("BATCH", "无域名"); return
         logger.info("BATCH", f"批量检测 {len(domains)} 域名...")
+        # 批量查询前：清所有展示区（上次单域名残留）
         for i in self.tree.get_children(): self.tree.delete(i)
         self._batch_results.clear()
+        self.dns_txt.configure(state=tk.NORMAL); self.dns_txt.delete("1.0", tk.END); self.dns_txt.configure(state=tk.DISABLED)
+        self.cache_status_var.set("")
+        self.lbl_domain.config(text="域名: —"); self.lbl_score.config(text="DGA 分数: —", foreground="black")
+        self.lbl_verdict.config(text="判定: —", style="TLabel")
         self._set_busy(len(domains))
 
         def _do():
@@ -575,7 +551,10 @@ class DGAGuiApp:
                     break
                 try:
                     resp, text, hit = dns_query(d, qtype, DNS_SERVER_ADDRESS, port=DNS_SERVER_PORT, use_cache=use_cache)
-                    dns_cache_hits[d] = hit
+                    if hit and text and "NEG CACHE HIT" in text:
+                        dns_cache_hits[d] = "neg"
+                    else:
+                        dns_cache_hits[d] = hit
                     ip_addr = "—"
                     if resp and resp.answer:
                         # 优先匹配与查询类型相同的 rrset，避免 CNAME 截断 A/AAAA
@@ -634,9 +613,13 @@ class DGAGuiApp:
                 if is_d: dga_n += 1
                 else: ok_n += 1
                 idx += 1
-        cache_hit_count = sum(1 for v in dns_cache_hits.values() if v is True)
+        cache_hit_count = sum(1 for v in dns_cache_hits.values() if v is True or v == "pos")
+        cache_neg_count = sum(1 for v in dns_cache_hits.values() if v == "neg")
         cache_miss_count = sum(1 for v in dns_cache_hits.values() if v is False)
-        self.cache_status_var.set(f"✓ 命中: {cache_hit_count}  ✗ 上游: {cache_miss_count}")
+        parts = [f"✓ 命中: {cache_hit_count}"]
+        if cache_neg_count: parts.append(f"✗ NX: {cache_neg_count}")
+        parts.append(f"✗ 上游: {cache_miss_count}")
+        self.cache_status_var.set("  ".join(parts))
         self.cache_status_lbl.configure(foreground=self.CLR_SAFE if cache_hit_count > cache_miss_count else "gray")
         processed = wl_n + dga_n + ok_n
         if cancelled:
@@ -667,15 +650,29 @@ class DGAGuiApp:
 
     # ── Export ─────────────────────────────────────────────────────
     def _export(self):
-        if not self._batch_results: messagebox.showwarning("导出", "无结果"); return
+        # 收集可导出结果：优先批量结果，否则尝试从单域名标签提取
+        results = list(self._batch_results)
+        if not results:
+            domain = self.lbl_domain.cget("text")
+            if domain and domain != "域名: —" and not domain.startswith("批量汇总"):
+                # 单域名结果
+                dname = domain.replace("域名: ", "")
+                score_str = self.lbl_score.cget("text").replace("DGA 分数: ", "")
+                verdict = self.lbl_verdict.cget("text")
+                is_dga = "DGA" in verdict or "恶意" in verdict
+                try: score = float(score_str.split()[0]) if score_str not in ("—", "N/A") else None
+                except: score = None
+                results = [{"domain": dname, "ip": "—", "score": score, "is_dga": is_dga, "whitelisted": "白名单" in verdict, "threshold": self.threshold_var.get(), "cache_hit": None}]
+        if not results:
+            messagebox.showwarning("导出", "无结果可导出"); return
         p = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json"), ("CSV", "*.csv")])
         if not p: return
         try:
             if p.endswith(".csv"):
                 with open(p, "w", newline="", encoding="utf-8") as f:
-                    w = csv.DictWriter(f, fieldnames=["domain", "ip", "score", "is_dga", "whitelisted", "threshold", "cache_hit"]); w.writeheader(); w.writerows(self._batch_results)
+                    w = csv.DictWriter(f, fieldnames=["domain", "ip", "score", "is_dga", "whitelisted", "threshold", "cache_hit"]); w.writeheader(); w.writerows(results)
             else:
-                with open(p, "w", encoding="utf-8") as f: json.dump(self._batch_results, f, ensure_ascii=False, indent=2)
+                with open(p, "w", encoding="utf-8") as f: json.dump(results, f, ensure_ascii=False, indent=2)
             logger.info("EXPORT", f"导出: {p}")
         except Exception as e: messagebox.showerror("导出失败", str(e))
 
