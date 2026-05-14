@@ -65,7 +65,20 @@ def dns_query(qname: str, qtype: str = "A", server: str = "8.8.8.8",
         text      - formatted result string
         cache_hit - bool
     """
-    # 1. Cache lookup
+    # 1. Negative cache lookup (RFC 2308 NXDOMAIN)
+    if use_cache and _ensure_cache():
+        _QTYPE_MAP_INT = {"A": 1, "AAAA": 28, "MX": 15, "TXT": 16, "CNAME": 5, "NS": 2, "SOA": 6, "PTR": 12}
+        qtype_int = _QTYPE_MAP_INT.get(qtype, 1)
+        qname_dot = qname if qname.endswith(".") else qname + "."
+        neg = _dns_cache.get_negative(qname_dot, qtype_int)
+        if neg is not None:
+            soa_rdata, remaining_ttl = neg
+            lines = [f"[NEG CACHE HIT] {qname} {qtype}  NXDOMAIN",
+                     f"  否定缓存 TTL: {remaining_ttl}s",
+                     f"  返回 NXDOMAIN（含 SOA 授权信息）"]
+            return None, "\n".join(lines), True
+
+    # 2. Cache lookup
     if use_cache:
         cached = cached_lookup(qname, qtype)
         if cached is not None:
@@ -103,20 +116,44 @@ def dns_query(qname: str, qtype: str = "A", server: str = "8.8.8.8",
             rdatas = [r.to_text() for r in rrset]
             lines.append(f"  {name}  {ttl}  IN  {rtype}  {', '.join(rdatas)}")
 
-    # 3. Cache A/AAAA/CNAME records (using dnspython integer rdtype — NOT dnslib)
+    # 3. Cache records or negative cache
     if use_cache and _ensure_cache():
-        _cache_records(resp, qname)
+        _cache_records(resp, qname, qtype)
 
     return resp, "\n".join(lines), False
 
 
-def _cache_records(resp, qname: str):
-    """Cache A/AAAA/CNAME from a dnspython response.
+def _cache_records(resp, qname: str, qtype: str = "A"):
+    """Cache A/AAAA/CNAME from a dnspython response, or NXDOMAIN negative cache.
 
-    Uses rr.rdtype (integer: 1=A, 28=AAAA, 5=CNAME) — NOT dnslib's QTYPE.
-    Mirrors simpleServer.add_records() logic.
+    Uses rr.rdtype (integer: 1=A, 28=AAAA, 5=CNAME, 6=SOA) — NOT dnslib's QTYPE.
+    Mirrors simpleServer.add_records() logic + negative cache support.
     """
+    import dns.rcode
+    _QTYPE_MAP = {"A": 1, "AAAA": 28, "MX": 15, "TXT": 16, "CNAME": 5, "NS": 2, "SOA": 6, "PTR": 12}
+    qtype_int = _QTYPE_MAP.get(qtype, 1)
     try:
+        qname_dot = qname if qname.endswith(".") else qname + "."
+
+        # Handle NXDOMAIN — cache negative result (RFC 2308)
+        if resp.rcode() == dns.rcode.NXDOMAIN:
+            neg_ttl = 300
+            # Try to extract SOA minimum from authority section
+            for rr in resp.authority:
+                if rr.rdtype == 6:  # SOA
+                    for r in rr:
+                        soa_text = r.to_text()
+                        soa_parts = soa_text.split()
+                        if len(soa_parts) >= 7:
+                            try:
+                                neg_ttl = max(int(soa_parts[6]), 300)
+                            except ValueError:
+                                pass
+                        break
+                    break
+            _dns_cache.set_negative(qname_dot, qtype_int, None, neg_ttl)
+            return
+
         a_list, a_ttl = [], None
         aaaa_list, aaaa_ttl = [], None
         for rr in resp.answer:
@@ -130,7 +167,6 @@ def _cache_records(resp, qname: str):
                     aaaa_list.append(r.to_text())
                 aaaa_ttl = rr.ttl if aaaa_ttl is None else min(aaaa_ttl, rr.ttl)
 
-        qname_dot = qname if qname.endswith(".") else qname + "."
         if a_list:
             _dns_cache.set(qname_dot, 1, a_list, a_ttl or 60)
         if aaaa_list:

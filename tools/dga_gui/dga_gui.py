@@ -143,8 +143,12 @@ class DGAGuiApp:
         self.batch_fr = ttk.Frame(fr)
         ttk.Label(self.batch_fr, text="JSON 文件:").pack(side=tk.LEFT)
         self.filepath_var = tk.StringVar()
-        ttk.Entry(self.batch_fr, textvariable=self.filepath_var, width=50).pack(side=tk.LEFT, padx=4)
+        ttk.Entry(self.batch_fr, textvariable=self.filepath_var, width=40).pack(side=tk.LEFT, padx=4)
         ttk.Button(self.batch_fr, text="浏览...", command=self._browse).pack(side=tk.LEFT, padx=4)
+        ttk.Label(self.batch_fr, text=" 类型:").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Combobox(self.batch_fr, textvariable=self.qtype_var,
+                     values=["A", "AAAA", "CNAME"], width=8,
+                     state="readonly").pack(side=tk.LEFT, padx=4)
 
     def _toggle_mode(self, *_):
         if self.mode_var.get() == "single":
@@ -574,15 +578,24 @@ class DGAGuiApp:
                     dns_cache_hits[d] = hit
                     ip_addr = "—"
                     if resp and resp.answer:
+                        # 优先匹配与查询类型相同的 rrset，避免 CNAME 截断 A/AAAA
+                        qt_int = {"A": 1, "AAAA": 28, "CNAME": 5}.get(qtype, 1)
                         for rrset in resp.answer:
-                            if rrset.rdtype in (1, 28, 5):  # A / AAAA / CNAME
+                            if rrset.rdtype == qt_int:
                                 ips = [r.to_text() for r in rrset]
                                 ip_addr = ", ".join(ips) if ips else "—"
                                 break
+                        # fallback: 匹配任意 A/AAAA/CNAME
+                        if ip_addr == "—":
+                            for rrset in resp.answer:
+                                if rrset.rdtype in (1, 28, 5):
+                                    ips = [r.to_text() for r in rrset]
+                                    ip_addr = ", ".join(ips) if ips else "—"
+                                    break
                     elif hit and text:
-                        m = re.search(r'IN\s+(?:A|AAAA|CNAME)\s+(\S+)', text)
+                        m = re.search(r'IN\s+(?:A|AAAA|CNAME)\s+(.+)', text)
                         if m:
-                            ip_addr = m.group(1)
+                            ip_addr = m.group(1).strip()
                     # sinkhole响应(0.0.0.0)表示DGA被拦截，显示"—"
                     if ip_addr == "0.0.0.0":
                         ip_addr = "—"

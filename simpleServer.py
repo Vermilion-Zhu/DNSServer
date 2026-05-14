@@ -3,7 +3,7 @@
 #REMEMBER TO DISABLE .ps1 SCRIPTS AFTER THE EXPERIMENT!
 
 from dns_cache import DNSCache
-from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, CNAME, RCODE
+from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, CNAME, RCODE, SOA
 from dnslib.server import DNSServer, DNSLogger as DnslibLogger
 import argparse, socket, os, time, threading, traceback
 
@@ -106,6 +106,14 @@ class HybridResolver:
             
             # ===== 正常解析流程 =====
             # (legacy local-record handling removed)
+
+            # ===== 否定缓存查询（RFC 2308） =====
+            neg = self.cache.get_negative(qname, qtype)
+            if neg:
+                soa_rdata, remaining_ttl = neg
+                logger.info("NEG_CACHE_HIT", f"{qname} - NXDOMAIN (remaining TTL: {remaining_ttl}s)")
+                return self._build_nxdomain_reply(request, qname, soa_rdata, remaining_ttl)
+
             cached = self.cache.get(qname, qtype)
             if cached:
                 rdata, remaining_ttl = cached
@@ -138,6 +146,17 @@ class HybridResolver:
                 self.add_records(reply, qname)
                 # CNAME chain resolution
                 reply = self._resolve_cname_chain(reply, request, qname, qtype)
+            elif getattr(reply, 'header', None) and reply.header.rcode == RCODE.NXDOMAIN:
+                # NXDOMAIN: 提取 SOA 并写入否定缓存（RFC 2308）
+                soa_rdata, neg_ttl = self._extract_soa(reply)
+                if soa_rdata:
+                    self.cache.set_negative(qname, qtype, soa_rdata, neg_ttl)
+                    logger.info("NEG_CACHE_SET", f"{qname} - NXDOMAIN, SOA minimum TTL: {neg_ttl}s")
+                else:
+                    # 上游未返回 SOA，使用默认否定缓存 TTL
+                    self.cache.set_negative(qname, qtype, None, 300)
+                    logger.info("NEG_CACHE_SET", f"{qname} - NXDOMAIN, default TTL: 300s")
+                logger.info("NXDOMAIN", f"{qname} - 域名不存在")
             else:
                 logger.warn("UPSTREAM_ERR", f"{qname} - RCODE: {reply.header.rcode if getattr(reply, 'header', None) else 'N/A'}, TC: {getattr(reply, 'tc', 'N/A')}, RR count: {len(getattr(reply, 'rr', []))}")
             return reply
@@ -309,6 +328,57 @@ class HybridResolver:
             pass
         
         return reply
+
+    def _build_nxdomain_reply(self, request, qname, soa_rdata, ttl):
+        """构建 NXDOMAIN 响应，Authority 段包含 SOA 记录（RFC 2308）。
+        
+        Args:
+            request: 原始请求
+            qname: 查询域名
+            soa_rdata: SOA 数据 dict（含 zone, mname, rname, serial, refresh, retry, expire, minimum）
+            ttl: 否定缓存剩余 TTL
+        """
+        reply = request.reply()
+        reply.header.rcode = RCODE.NXDOMAIN
+        if soa_rdata and isinstance(soa_rdata, dict):
+            zone = soa_rdata.get("zone", qname)
+            soa = SOA(
+                mname=soa_rdata.get("mname", ""),
+                rname=soa_rdata.get("rname", ""),
+                times=(
+                    soa_rdata.get("serial", 0),
+                    soa_rdata.get("refresh", 3600),
+                    soa_rdata.get("retry", 600),
+                    soa_rdata.get("expire", 86400),
+                    soa_rdata.get("minimum", ttl),
+                )
+            )
+            reply.add_auth(RR(zone, QTYPE.SOA, rdata=soa, ttl=ttl))
+        return reply
+
+    def _extract_soa(self, reply):
+        """从上游 NXDOMAIN 响应的 Authority 段提取 SOA 记录。
+        
+        Returns (soa_rdata_dict, neg_ttl) 或 (None, 300)。
+        neg_ttl = min(SOA.MINIMUM, SOA RR TTL)（RFC 2308）。
+        """
+        for rr in getattr(reply, 'auth', []):
+            if rr.rtype == QTYPE.SOA:
+                soa = rr.rdata
+                soa_rdata = {
+                    "zone": str(rr.rname),
+                    "mname": str(soa.mname),
+                    "rname": str(soa.rname),
+                    "serial": soa.times[0] if hasattr(soa, 'times') and len(soa.times) > 0 else 0,
+                    "refresh": soa.times[1] if hasattr(soa, 'times') and len(soa.times) > 1 else 3600,
+                    "retry": soa.times[2] if hasattr(soa, 'times') and len(soa.times) > 2 else 600,
+                    "expire": soa.times[3] if hasattr(soa, 'times') and len(soa.times) > 3 else 86400,
+                    "minimum": soa.times[4] if hasattr(soa, 'times') and len(soa.times) > 4 else 300,
+                }
+                # RFC 2308: negative cache TTL = min(SOA.MINIMUM, SOA RR TTL)
+                neg_ttl = min(soa_rdata["minimum"], rr.ttl)
+                return soa_rdata, neg_ttl
+        return None, 300
     
     # (refuse reply helper removed; using sinkhole or normal replies)
 
