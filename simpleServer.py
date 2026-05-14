@@ -3,7 +3,7 @@
 #REMEMBER TO DISABLE .ps1 SCRIPTS AFTER THE EXPERIMENT!
 
 from dns_cache import DNSCache
-from dnslib import DNSRecord, RR, QTYPE, A, AAAA, MX, TXT, CNAME, RCODE, SOA
+from dnslib import DNSRecord, RR, QTYPE, A, AAAA, CNAME, RCODE, SOA
 from dnslib.server import DNSServer, DNSLogger as DnslibLogger
 import argparse, socket, os, time, threading, traceback
 
@@ -35,14 +35,6 @@ except ImportError:
 class HybridResolver:
     def __init__(self, upstream="8.8.8.8"):
         self.upstream = upstream
-        self.records = {
-            "local.test.": ("A", "192.168.1.100"),
-            "ipv6.test.": ("AAAA", "2001:db8::1"),
-            "mail.test.": ("MX", (10, "mail.local.test.")),
-            "info.test.": ("TXT", "This is a test record"),
-            # format: <site> : (<type>, <address>)      not good enough :(
-        }
-        # A temporary cache placeholder (legacy local-record support removed)
         self.cache = DNSCache("dns_cache.db")
 
         #Calculate the processing time and total amount of requests
@@ -164,11 +156,6 @@ class HybridResolver:
             self.processing_time += time.time() - start
             self.count += 1
     
-    #QTYPE.xxx is a enumarate type, which will be evaluated into integers
-    def _match_type(self, qtype, rtype_str):
-        type_map = {"A": QTYPE.A, "AAAA": QTYPE.AAAA, "MX": QTYPE.MX, "TXT": QTYPE.TXT, "CNAME": QTYPE.CNAME}
-        return qtype == type_map.get(rtype_str)
-    
     # Build replies according to the query type
     def _build_reply(self, request, qname, qtype, rdata, ttl=60):
         reply = request.reply()
@@ -186,11 +173,6 @@ class HybridResolver:
                 reply.add_answer(RR(qname, QTYPE.AAAA, rdata=AAAA(rdata), ttl=ttl))
         elif qtype == QTYPE.CNAME:
             reply.add_answer(RR(qname, QTYPE.CNAME, rdata=CNAME(rdata), ttl=ttl))
-        elif qtype == QTYPE.MX:
-            pref, mx = rdata if isinstance(rdata, tuple) else (10, rdata)
-            reply.add_answer(RR(qname, QTYPE.MX, rdata=MX(pref, mx), ttl=ttl))
-        elif qtype == QTYPE.TXT:
-            reply.add_answer(RR(qname, QTYPE.TXT, rdata=TXT(rdata), ttl=ttl))
         return reply
     
     #Use sockets to perform a query to higher-level DNS servers
