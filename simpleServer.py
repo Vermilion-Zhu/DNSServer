@@ -3,6 +3,7 @@
 #REMEMBER TO DISABLE .ps1 SCRIPTS AFTER THE EXPERIMENT!
 
 from dns_cache import DNSCache
+from prefetcher import PrefetchManager
 from dnslib import DNSRecord, RR, QTYPE, A, AAAA, CNAME, RCODE, SOA
 from dnslib.server import DNSServer, DNSLogger as DnslibLogger
 import argparse, socket, os, time, threading, traceback
@@ -36,6 +37,9 @@ class HybridResolver:
     def __init__(self, upstream="8.8.8.8"):
         self.upstream = upstream
         self.cache = DNSCache("dns_cache.db")
+
+        self.prefetch_mgr = PrefetchManager(self)
+        self.prefetch_mgr.start()
 
         #Calculate the processing time and total amount of requests
         self.processing_time = 0.
@@ -71,6 +75,9 @@ class HybridResolver:
         q = request.q
         qname = str(q.qname)
         qtype = q.qtype
+
+        self.prefetch_mgr.record_query(qname)
+        
         #print(f'Processing {qname}, with type {qtype}')
         
         try:
@@ -383,6 +390,14 @@ if __name__ == "__main__":
         # stop background cleaner and close cache
         try:
             resolver._stop_cleaner.set()
+        except Exception:
+            pass
+        try:
+            resolver.prefetch_mgr.stop()
+        except Exception:
+            pass
+        try:
+            resolver.cache.close()
         except Exception:
             pass
         try:
