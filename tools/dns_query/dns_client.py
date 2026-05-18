@@ -32,7 +32,8 @@ def parse_args(argv):
     )
     parser.add_argument('arguments', nargs='+', 
                         help='[@server] name [type] - server with @ prefix, name is required, type defaults to A')
-    
+    parser.add_argument('-p', '--port', type=int, default=53,
+                    help='DNS server port (default: 53)')
     args = parser.parse_args(argv)
     
     server = None
@@ -54,10 +55,10 @@ def parse_args(argv):
     if not qname:
         parser.error("name is required")
     
-    return server, qname, qtype
+    return server, qname, qtype, args.port
 
 
-def send_query(server: str, qname: str, qtype: str, port: int = 53):
+def send_query(server: str, port: int, qname: str, qtype: str):
     q = dns.message.make_query(qname, qtype)
     try:
         # try UDP first
@@ -69,7 +70,6 @@ def send_query(server: str, qname: str, qtype: str, port: int = 53):
             return resp
         except Exception as e:
             raise
-
 
 
 def print_section(title: str, section):
@@ -94,7 +94,7 @@ def print_section(title: str, section):
 
 
 def main(argv):
-    server, qname, qtype = parse_args(argv)
+    server, qname, qtype, port = parse_args(argv)
 
     resolver = dns.resolver.Resolver()
     if not server:
@@ -105,8 +105,8 @@ def main(argv):
             server = "127.0.0.1"
 
     try:
-        print(f"\U0001F50D Querying {server} for {qname} {qtype}")
-        resp = send_query(server, qname, qtype)
+        print(f"\U0001F50D Querying {server}: {port} for {qname} {qtype}")
+        resp = send_query(server, port, qname, qtype)
     except Exception as e:
         print(f"\u274C Query failed: {e}")
         sys.exit(1)
@@ -128,7 +128,7 @@ def main(argv):
     print()
 
     # Summary
-    print(f"Query time: {getattr(resp, 'time', 'N/A')}s, server: {server}\n")
+    print(f"Query time: {getattr(resp, 'time', 'N/A')}s, server: {server}:{port}\n")
 
 
 if __name__ == "__main__":
