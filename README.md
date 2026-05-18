@@ -64,6 +64,7 @@ DNSServer/
 ├── dns_cache.py                 # 🟢 缓存层：SQLite DNS 缓存（正向 + 否定缓存）
 ├── config.py                    # 🟢 配置中心：端口/上游/DGA/白名单
 ├── logger.py                    # 🟢 统一日志：DNSLogger + 多 Handler 架构
+├── prefetcher.py                # 🟢 启发式预加载管理器
 ├── requirements.txt             # 依赖清单
 ├── README.md                    # 本文档：项目说明
 ├── README_OLD.md                # 旧版开发日志（归档）
@@ -94,6 +95,7 @@ DNSServer/
 │   └── dns_query/               # 🟡 CLI 查询工具
 │       ├── __init__.py
 │       └── dns_client.py        #   dig 风格命令行 DNS 客户端
+│       └── train_prefetch.py    #   prefetch测试
 │
 ├── docs/
 │   └── demo.html                # 🎬 DNS 解析动画演示（纯静态 HTML）
@@ -518,6 +520,52 @@ python tools/dns_query/dns_client.py example.com AAAA
 - 未指定服务器时自动使用系统默认 DNS
 
 ---
+### 8. 启发式预加载模块 — `prefetcher.py`
+
+**核心类：`PrefetchManager`**
+
+基于滑动窗口与共现矩阵的智能域名预加载模块。通过分析历史查询模式，自动学习高置信度的“伴随域名”对（例如 `www.taobao.com` 后常跟随 `g.alicdn.com`），并在后台提前将目标域名解析结果写入本地缓存，从而大幅降低用户后续访问延迟。
+
+**工作原理：**
+
+1. **记录阶段**：每次 DNS 查询到达时，`resolve()` 方法将域名（`qname`）推入无界队列，后台线程 `_record_worker` 从队列中取出域名，更新滑动窗口历史与共现矩阵。
+2. **学习阶段**：周期性分析（默认 30 秒）共现矩阵，计算条件概率 `P(B|A) = count(A,B)/count(A)`。当置信度超过阈值（默认 0.7）且共现次数 ≥ 最小计数（默认 3）时，生成预加载候选对。
+3. **预取阶段**：对每个候选对中的目标域名 `B`，调用 `_forward()` 向上游 DNS 发起一次真实查询，并将解析结果通过 `add_records()` 写入 SQLite 缓存。后续用户请求 `B` 时直接缓存命中。
+
+**配置参数（位于 `prefetcher.py` 文件头部）：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `SLIDING_WINDOW_SIZE` | 200 | 滑动窗口大小 |
+| `CORRELATION_BACKTRACK` | 15 | 回溯步长 |
+| `MIN_COUNT` | 3 | 阈值 |
+| `CONFIDENCE_THRESHOLD` | 0.7 | 预加载置信度阈值 |
+| `PREFETCH_INTERVAL_SEC` | 30 | 预加载分析周期（秒） |
+| `PREFETCH_QTYPE` | `'A'` | 预加载时查询的记录类型 |
+
+**线程模型：**
+
+- **记录工作线程** (`PrefetchRecordWorker`)：从队列取出域名，更新历史与共现矩阵。
+- **预加载定时器线程** (`PrefetchAnalyzer`)：每隔 `PREFETCH_INTERVAL_SEC` 秒分析并执行预加载。
+- 两个线程均为 `daemon`，服务器退出时由 `prefetch_mgr.stop()` 安全终止。
+
+**集成方式（`simpleServer.py` 中）：**
+
+```python
+from prefetcher import PrefetchManager
+
+class HybridResolver:
+    def __init__(self, upstream="8.8.8.8"):
+        # ... 原有代码 ...
+        self.prefetch_mgr = PrefetchManager(self)
+        self.prefetch_mgr.start()
+
+    def resolve(self, request, handler):
+        qname = str(request.q.qname)
+        self.prefetch_mgr.record_query(qname)   # 记录查询
+        # ... 其余解析流程 ...
+```
+---
 
 ## 数据流与处理流程
 
@@ -729,3 +777,5 @@ python -m model_training.bench_inference --model artifacts/models/active/dga_mod
 | 2026/5/13 | GUI 架构重构：自动启动本地服务器、上游 DNS 可配置、批量进度反馈与任务取消、`--upstream` CLI 参数 |
 | 2026/5/14 | RFC 2308 否定缓存：NXDOMAIN 含 SOA 缓存；GUI 双模式去除 + 独立按钮；导出支持单域名；多IP展示修复 |
 | 2026/5/14 | DNS 演示动画：3 场景纯静态 HTML（递归解析/DGA拦截/实时查询），AI 特征可视化，步骤时间线 |
+| 2026/5/18 | 实现启发式预加载模块 (prefetcher.py)：滑动窗口统计、共现矩阵、置信度判定、后台周期性预加载，有效提升伴随域名解析速度。 |
+
