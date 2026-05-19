@@ -255,14 +255,22 @@ class DGAGuiApp:
 
         cols = ("domain", "ip", "score", "verdict", "status", "cache")
         self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=6)
-        for c, w in zip(cols, [220, 130, 90, 70, 50, 60]):
+        for c, w in zip(cols, [220, 250, 90, 70, 50, 60]):
             self.tree.heading(c, text={"domain":"域名","ip":"IP地址","score":"DGA 分数","verdict":"判定","status":"状态","cache":"缓存"}[c])
             self.tree.column(c, width=w, minwidth=50, anchor=tk.CENTER if c not in ("domain", "ip") else tk.W)
-        sb = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); sb.pack(side=tk.RIGHT, fill=tk.Y)
+        # 垂直滚动条
+        sb_v = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb_v.set)
+        # 水平滚动条
+        sb_h = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(xscrollcommand=sb_h.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        sb_v.grid(row=0, column=1, sticky="ns")
+        sb_h.grid(row=1, column=0, sticky="ew")
+        tf.rowconfigure(0, weight=1); tf.columnconfigure(0, weight=1)
         for tag, clr in [("safe", self.CLR_SAFE), ("danger", self.CLR_DANGER), ("warn", self.CLR_WARN), ("wl", "#2196f3")]:
             self.tree.tag_configure(tag, foreground=clr)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         return fr
 
     def _build_log_frame(self):
@@ -308,36 +316,74 @@ class DGAGuiApp:
 
     def _add_row(self, domain, score, is_dga, whitelisted=False, ip_addr="—", cache_hit=None):
         cache_text = self._cache_hit_text(cache_hit)
+        ip_display = self._format_ip_display(ip_addr) if ip_addr != "—" else "—"
         if whitelisted:
-            self.tree.insert("", tk.END, values=(domain, ip_addr, "—", "白名单", "🔵", cache_text), tags=("wl",))
+            self.tree.insert("", tk.END, values=(domain, ip_display, "—", "白名单", "🔵", cache_text), tags=("wl",))
         elif score is None or isinstance(score, str):
             if is_dga:
-                self.tree.insert("", tk.END, values=(domain, ip_addr, str(score) or "N/A", "DGA", "🔴", cache_text), tags=("danger",))
+                self.tree.insert("", tk.END, values=(domain, ip_display, str(score) or "N/A", "DGA", "🔴", cache_text), tags=("danger",))
             else:
-                self.tree.insert("", tk.END, values=(domain, ip_addr, "—", "正常", "🟢", cache_text), tags=("safe",))
+                self.tree.insert("", tk.END, values=(domain, ip_display, "—", "正常", "🟢", cache_text), tags=("safe",))
         else:
             sf = float(score); dga = is_dga
-            self.tree.insert("", tk.END, values=(domain, ip_addr, f"{sf:.4f}", "DGA" if dga else "正常", "🔴" if dga else "🟢", cache_text),
+            self.tree.insert("", tk.END, values=(domain, ip_display, f"{sf:.4f}", "DGA" if dga else "正常", "🔴" if dga else "🟢", cache_text),
                              tags=("danger" if dga else "safe",))
 
     @staticmethod
     def _cache_hit_text(cache_hit):
         if cache_hit == "neg":
             return "✗ NXDOMAIN"
-        elif cache_hit is True or cache_hit == "pos":
+        elif cache_hit is True:
             return "✓ 命中"
         elif cache_hit is False:
             return "✗ 上游"
         else:
             return "—"
 
-    def _clear(self):
+    @staticmethod
+    def _format_ip_display(ip_addr: str, max_len: int = 50) -> str:
+        """截断过长的 IP 列表用于表格展示，完整内容在点击行时显示。"""
+        if len(ip_addr) <= max_len:
+            return ip_addr
+        parts = ip_addr.split(", ")
+        if len(parts) <= 1:
+            return ip_addr[:max_len - 3] + "..."
+        return f"{parts[0]}, ... (+{len(parts) - 1})"
+
+    def _on_tree_select(self, event):
+        """点击 Treeview 行时，在 DNS 文本区展示该域名的完整 IP 详情。"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = self.tree.item(sel[0])
+        values = item.get("values", [])
+        if not values or len(values) < 2:
+            return
+        domain = values[0]
+        ip_display = values[1]
+        # 从 _batch_results 中查找完整 IP（未被截断的）
+        full_ip = ip_display
+        for r in self._batch_results:
+            if r.get("domain") == domain:
+                full_ip = r.get("ip", ip_display)
+                break
+        lines = [f"域名: {domain}", f"完整 IP: {full_ip}", ""]
+        # 展示 DNS 查询的原始文本（如果有缓存的话）
+        cache_info = values[5] if len(values) > 5 else "—"
+        lines.append(f"缓存状态: {cache_info}")
+        self._set_dns("\n".join(lines))
+
+    def _clear_display(self):
+        """清空所有展示区域（单域名标签 + Treeview + DNS 文本框 + 缓存状态）。"""
         self.dns_txt.configure(state=tk.NORMAL); self.dns_txt.delete("1.0", tk.END); self.dns_txt.configure(state=tk.DISABLED)
         self.cache_status_var.set("")
         self.lbl_domain.config(text="域名: —"); self.lbl_score.config(text="DGA 分数: —", foreground="black")
         self.lbl_verdict.config(text="判定: —", style="TLabel")
         for i in self.tree.get_children(): self.tree.delete(i)
         self._batch_results.clear()
+
+    def _clear(self):
+        self._clear_display()
 
     # ── DNS Server ─────────────────────────────────────────────────
     def _check_server_alive(self) -> bool:
@@ -433,7 +479,10 @@ class DGAGuiApp:
             s = qs()
             if s is None:
                 logger.warn("CACHE", "缓存统计失败"); return
-            lines = [f"DNS 缓存统计:", f"  总: {s['total']}  有效: {s['active']}  过期: {s['expired']}", ""]
+            lines = [f"DNS 缓存统计:",
+                     f"  正向: {s['pos_total']}条 (有效 {s['pos_active']})",
+                     f"  否定: {s['neg_total']}条 (有效 {s['neg_active']})",
+                     f"  合计: {s['total']}条  有效: {s['active']}  过期: {s['expired']}", ""]
             if s["rows"]:
                 lines.append("最近记录:")
                 for dom, qt, rd, exp in s["rows"]:
@@ -445,7 +494,7 @@ class DGAGuiApp:
                     lines.append(f"  {dom} {qt_str} → {rd[:40]} ({st})")
             else: lines.append("(空)")
             self._set_dns("\n".join(lines))
-            logger.info("CACHE", f"缓存: {s['total']}条, {s['active']}有效")
+            logger.info("CACHE", f"缓存: {s['total']}条 (正向 {s['pos_active']}, 否定 {s['neg_active']}), {s['active']}有效")
         except Exception as e:
             logger.error("CACHE", f"缓存统计失败: {e}")
 
@@ -464,14 +513,11 @@ class DGAGuiApp:
             messagebox.showinfo("提示", "有任务正在运行，请等待或取消"); return
         if not self._check_server_alive():
             messagebox.showwarning("服务器", "本地 DNS 服务器未运行，请重启"); return
-        # 单域名查询前：清 Treeview（上次批量残留）+ DGA 标签
-        for i in self.tree.get_children(): self.tree.delete(i)
-        self._batch_results.clear()
-        self.lbl_domain.config(text="域名: —"); self.lbl_score.config(text="DGA 分数: —", foreground="black")
-        self.lbl_verdict.config(text="判定: —", style="TLabel")
-
         domain = self.domain_var.get().strip()
         if not domain: messagebox.showwarning("错误", "请输入域名"); return
+        # 单域名查询前清空展示区
+        self._clear_display()
+
         qtype = self.qtype_var.get(); thr = self.threshold_var.get()
         use_cache = self.use_cache_var.get(); use_wl = self.use_wl_var.get()
         logger.info("QUERY", f"查询 {domain} {qtype} @ {DNS_SERVER_ADDRESS}:{DNS_SERVER_PORT}...")
@@ -488,7 +534,11 @@ class DGAGuiApp:
     def _on_dns_done(self, domain, resp, text, thr, cache_hit, use_wl):
         self._set_idle()
         self._set_dns(text)
-        if cache_hit:
+        neg_cache = cache_hit and text and "NEG CACHE HIT" in text
+        if neg_cache:
+            self.cache_status_var.set("🟡 NXDOMAIN (否定缓存)")
+            self.cache_status_lbl.configure(foreground=self.CLR_WARN)
+        elif cache_hit:
             self.cache_status_var.set("🟢 缓存命中")
             self.cache_status_lbl.configure(foreground=self.CLR_SAFE)
         elif resp:
@@ -497,7 +547,9 @@ class DGAGuiApp:
         else:
             self.cache_status_var.set("🔴 查询失败")
             self.cache_status_lbl.configure(foreground=self.CLR_DANGER)
-        if cache_hit:
+        if neg_cache:
+            logger.info("NEG_CACHE_HIT", f"{domain} 否定缓存命中")
+        elif cache_hit:
             logger.info("CACHE_HIT", "DNS 缓存命中")
         elif resp:
             logger.info("QUERY", "DNS 查询完成 (已缓存)")
@@ -527,13 +579,8 @@ class DGAGuiApp:
         except Exception as e: logger.error("BATCH", f"JSON 错误: {e}"); return
         if not domains: logger.warn("BATCH", "无域名"); return
         logger.info("BATCH", f"批量检测 {len(domains)} 域名...")
-        # 批量查询前：清所有展示区（上次单域名残留）
-        for i in self.tree.get_children(): self.tree.delete(i)
-        self._batch_results.clear()
-        self.dns_txt.configure(state=tk.NORMAL); self.dns_txt.delete("1.0", tk.END); self.dns_txt.configure(state=tk.DISABLED)
-        self.cache_status_var.set("")
-        self.lbl_domain.config(text="域名: —"); self.lbl_score.config(text="DGA 分数: —", foreground="black")
-        self.lbl_verdict.config(text="判定: —", style="TLabel")
+        # 批量查询前清空展示区
+        self._clear_display()
         self._set_busy(len(domains))
 
         def _do():
@@ -613,7 +660,7 @@ class DGAGuiApp:
                 if is_d: dga_n += 1
                 else: ok_n += 1
                 idx += 1
-        cache_hit_count = sum(1 for v in dns_cache_hits.values() if v is True or v == "pos")
+        cache_hit_count = sum(1 for v in dns_cache_hits.values() if v is True)
         cache_neg_count = sum(1 for v in dns_cache_hits.values() if v == "neg")
         cache_miss_count = sum(1 for v in dns_cache_hits.values() if v is False)
         parts = [f"✓ 命中: {cache_hit_count}"]
