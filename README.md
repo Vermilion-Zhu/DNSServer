@@ -17,9 +17,13 @@
   - [DGA 检测模块](#5-dga-检测模块--model_training)
   - [GUI 可视化工具](#6-gui-可视化工具--toolsdga_gui)
   - [DNS 命令行客户端](#7-dns-命令行客户端--toolsdns_query)
+  - [启发式预加载模块](#8-启发式预加载模块--prefetcherpy)
+  - [Demo 演示系统](#9-demo-演示系统--toolsdemo_apy--docsdemohtml)
 - [数据流与处理流程](#数据流与处理流程)
 - [快速开始](#快速开始)
+  - [验证预加载效果](#验证预加载效果)
 - [配置说明](#配置说明)
+  - [预加载器配置](#预加载器配置)
 - [模型训练](#模型训练)
 - [项目特点](#项目特点)
 - [开发历史](#开发历史)
@@ -36,8 +40,10 @@
 - 🛡️ AI 驱动的 DGA 恶意域名实时检测与拦截
 - 💾 SQLite 持久化缓存，支持 TTL 过期与后台自动清理
 - 🔗 CNAME 链递归解析（最大深度 5）
+- 🧠 启发式预加载：学习查询模式，提前预热缓存
 - 🖥️ GUI 可视化工具与 CLI 查询工具
 - ⚙️ 集中化配置管理，白名单机制
+- 🎬 Web 演示页面：DNS 解析流程动画（3 场景 + 实时查询）
 
 ---
 
@@ -70,12 +76,12 @@ DNSServer/
 ├── README_OLD.md                # 旧版开发日志（归档）
 ├── test.bash                    # Linux 测试脚本
 ├── wtest.ps1                    # Windows 测试脚本
+├── launch.bat                   # Windows 一键启动脚本（菜单选择）
 │
 ├── model_training/              # 🔵 DGA 模型训练与运行时
 │   ├── __init__.py
 │   ├── train_dga_model.py       #   特征提取 + 模型训练脚本
 │   ├── dga_runtime.py           #   推理运行时（单条/批量预测）
-│   ├── classifier.py            #   启发式 DGA 检测器（旧版/备用）
 │   ├── bench_inference.py       #   推理性能基准测试
 │   ├── README.md                #   模型训练说明
 │   └── docs/
@@ -409,18 +415,7 @@ def _read_stdout():
 
 **当前活跃模型：** `artifacts/models/active/dga_model_light_markov_100k_v2.pkl`
 
-#### 4.3 启发式检测器 — `classifier.py`
-
-基于规则的备用 DGA 检测方案，不依赖 ML 模型：
-
-- 熵 > 3.2 → +0.3
-- 元音比 < 0.25 → +0.2
-- 数字比 > 0.15 → +0.2
-- 辅音连续 > 4 → +0.3
-- 长度 > 12 → +0.2
-- 随机字符序列 ≥ 10 → +0.2
-
-#### 4.4 推理基准测试 — `bench_inference.py`
+#### 4.3 推理基准测试 — `bench_inference.py`
 
 测量模型推理性能，支持批量推理和 warmup，输出 QPS 和平均延迟。
 
@@ -566,6 +561,46 @@ class HybridResolver:
         # ... 其余解析流程 ...
 ```
 ---
+### 9. Demo 演示系统 — `tools/demo_api.py` + `docs/demo.html`
+
+独立的 Web 演示系统，用动画展示 DNS 解析全流程，无需真实 DNS 服务器运行。
+
+**架构：**
+
+```
+docs/demo.html (前端) ──HTTP──▶ tools/demo_api.py (:8080) ──▶ DGA模型 / DNS缓存 / 上游查询
+   赛博朋克风格 UI                Flask-free 轻量 API             共用 dns_cache.db + 模型
+```
+
+**三个场景：**
+
+| 场景 | 内容 | 数据来源 |
+|------|------|----------|
+| 场景 1 | 正常域名递归解析 + 缓存生效（google.com） | 硬编码演示步骤 |
+| 场景 2 | DGA 恶意域名拦截全流程（eqwzjxk.com） | 硬编码 + AI 特征可视化 |
+| 场景 3 | 实时域名查询 | 调用 API，动态生成动画步骤 |
+
+**启动方式：**
+
+```bash
+# 启动 API 服务器
+python tools/demo_api.py
+
+# 浏览器打开
+http://localhost:8080/demo
+```
+
+**API 端点：**
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/query?domain=X&qtype=A` | 完整 DNS 解析管线，返回逐步细节 + DGA 特征 |
+| `GET /api/status` | 服务器状态（DGA 可用性、缓存状态、阈值等） |
+| `GET /demo` | 返回 demo.html 页面 |
+
+**场景 3 动画步骤自动生成：** API 返回的 `steps` 数组中每步包含 `phase`（白名单/DGA检测/缓存/上游/响应），前端 `buildLiveSteps()` 据此构建对应的节点动画、数据包动画、Wireshark 报文和日志行。
+
+---
 
 ## 数据流与处理流程
 
@@ -579,28 +614,33 @@ class HybridResolver:
                     └───────────┬───────────┘
                                 │
                     ┌───────────▼───────────┐
-                    │  白名单检查            │
-                    │  _is_whitelisted()    │
-                    └───┬───────────────┬───┘
-                        │ 命中          │ 未命中
-                        ▼               ▼
-                   跳过 DGA     ┌───────────────┐
-                                │ DGA AI 检测    │
-                                │ _check_dga()  │
-                                └──┬─────────┬──┘
-                                   │ 正常    │ 恶意
-                                   ▼         ▼
-                            ┌──────────┐  Sinkhole
-                            │ 缓存查询  │  响应
-                            │ cache.get│  (0.0.0.0)
-                            └──┬────┬──┘
-                               │命中│未命中
-                               ▼    ▼
-                          直接返回  ┌──────────────┐
-                                   │ CNAME 缓存查询 │
-                                   └──┬─────────┬──┘
-                                      │命中     │未命中
-                                      ▼         ▼
+                    │  记录查询域名到        │
+                    │  PrefetchManager      │──────┐
+                    └───────────┬───────────┘      │
+                                │                  │
+                    ┌───────────▼───────────┐      │
+                    │  白名单检查            │      │
+                    │  _is_whitelisted()    │      │
+                    └───┬───────────────┬───┘      │
+                        │ 命中          │ 未命中    │
+                        ▼               ▼          │
+                   跳过 DGA     ┌───────────────┐   │
+                                │ DGA AI 检测    │   │
+                                │ _check_dga()  │   │
+                                └──┬─────────┬──┘   │
+                                   │ 正常    │ 恶意  │
+                                   ▼         ▼      │
+                            ┌──────────┐  Sinkhole  │
+                            │ 缓存查询  │  响应      │
+                            │ cache.get│  (0.0.0.0) │
+                            └──┬────┬──┘            │
+                               │命中│未命中          │
+                               ▼    ▼               │
+                          直接返回  ┌──────────────┐ │
+                    (含预加载)     │ CNAME 缓存查询 │ │
+                                   └──┬─────────┬──┘ │
+                                      │命中     │未命中│
+                                      ▼         ▼     │
                                  递归解析    ┌──────────────┐
                                  返回结果    │ 上游 DNS 转发  │
                                             │ _forward()    │
@@ -609,6 +649,17 @@ class HybridResolver:
                                                ▼          ▼
                                          缓存写入     返回 SERVFAIL
                                          返回响应
+                                              │
+    ┌─────────────────────────────────────────┘
+    │  (后台并行)
+    ▼
+┌──────────────────────────────┐
+│  PrefetchManager             │
+│  ├─ 滑动窗口记录历史查询      │
+│  ├─ 统计共现矩阵 A→B         │
+│  ├─ 置信度 ≥ 70% 触发预取    │
+│  └─ 提前写入缓存 (PREFETCH)  │
+└──────────────────────────────┘
 ```
 
 ---
@@ -691,6 +742,32 @@ bash test.bash
 - **独立运行**：按 `Ctrl+C` 停止服务器，将输出统计报告并优雅关闭缓存和清理线程
 - **GUI 模式**：关闭 GUI 窗口时自动终止服务器子进程
 
+### 7. 一键启动（Windows）
+
+```bash
+# 双击项目根目录下的 launch.bat，菜单选择启动
+launch.bat
+```
+
+### 验证预加载效果
+
+预加载器通过分析查询模式自动预热缓存。验证方式：
+
+```bash
+# 1. 启动服务器
+python simpleServer.py
+
+# 2. 模拟连续浏览行为（用另一个终端）
+#    先查 taobao，再查它常用的 CDN 域名
+python -m dnslib.client --server 127.0.0.1:5353 www.taobao.com A
+python -m dnslib.client --server 127.0.0.1:5353 g.alicdn.com A
+
+# 3. 等 30 秒后（预加载周期），再次查 g.alicdn.com
+#    日志中应出现 CACHE_HIT（而非上游查询），说明预加载已预热缓存
+```
+
+也可在 GUI 中操作：连续查询几个有关联的域名后，观察缓存统计中「正向缓存」条目数的增长——预加载器会自动填充高频伴随域名的记录。
+
 ---
 
 ## 配置说明
@@ -712,6 +789,19 @@ bash test.bash
 | `ENABLE_DGA_DETECTION` | `True` | DGA 检测总开关 |
 | `DGA_THRESHOLD` | `0.7` | 置信度阈值（0.6 宽松 / 0.7 平衡 / 0.8 严格） |
 | `DGA_ACTION` | `"SINKHOLE"` | 拦截动作：`SINKHOLE` 返回 0.0.0.0，`REFUSE` 拒绝解析 |
+
+### 预加载器配置
+
+预加载参数位于 `prefetcher.py` 文件头部，修改后重启服务器生效：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `SLIDING_WINDOW_SIZE` | `200` | 滑动窗口大小（记录最近多少次查询） |
+| `CORRELATION_BACKTRACK` | `15` | 回溯步长（统计 A 之前多少步内出现过的域名） |
+| `MIN_COUNT` | `3` | 最小共现次数（低于此不计入候选） |
+| `CONFIDENCE_THRESHOLD` | `0.7` | 预加载置信度阈值（P(B\|A) ≥ 此值才预取） |
+| `PREFETCH_INTERVAL_SEC` | `30` | 预加载分析/执行周期（秒） |
+| `PREFETCH_QTYPE` | `'A'` | 预加载时查询的记录类型 |
 
 ### 白名单配置
 
@@ -758,9 +848,11 @@ python -m model_training.bench_inference --model artifacts/models/active/dga_mod
 
 1. **AI 增强安全**：RandomForest + Markov 链特征模型集成到 DNS 解析流程，实现实时 DGA 检测与拦截
 2. **双层缓存体系**：SQLite 正向缓存（A/AAAA/CNAME）+ RFC 2308 否定缓存（NXDOMAIN 含 SOA），TTL 过期自动清理
-3. **多工具协同**：CLI 客户端 + GUI 桌面应用 + 纯静态 HTML 演示动画，覆盖不同使用场景
-4. **统一配置与日志**：`config.py` 集中管理所有参数 → `logger.py` 多 Handler 架构（文件/控制台/GUI 控件）
-5. **GUI 深度集成**：GUI 子进程启动服务器 + 实时日志捕获 + 上游 DNS 可配 + 批量进度反馈 + 取消
+3. **智能预加载**：滑动窗口 + 共现矩阵学习查询模式，自动预热高频伴随域名，首次查询即可缓存命中
+4. **多工具协同**：CLI 客户端 + GUI 桌面应用 + Web 演示动画 + 一键启动脚本，覆盖不同使用场景
+5. **统一配置与日志**：`config.py` 集中管理所有参数 → `logger.py` 多 Handler 架构（文件/控制台/GUI 控件）
+6. **GUI 深度集成**：GUI 子进程启动服务器 + 实时日志捕获 + 上游 DNS 可配 + 批量进度反馈 + 取消
+7. **Web 可视化演示**：纯静态 HTML 动画演示 DNS 解析流程，支持实时 API 查询、AI 特征可视化和步骤回放
 
 ---
 
@@ -777,5 +869,7 @@ python -m model_training.bench_inference --model artifacts/models/active/dga_mod
 | 2026/5/13 | GUI 架构重构：自动启动本地服务器、上游 DNS 可配置、批量进度反馈与任务取消、`--upstream` CLI 参数 |
 | 2026/5/14 | RFC 2308 否定缓存：NXDOMAIN 含 SOA 缓存；GUI 双模式去除 + 独立按钮；导出支持单域名；多IP展示修复 |
 | 2026/5/14 | DNS 演示动画：3 场景纯静态 HTML（递归解析/DGA拦截/实时查询），AI 特征可视化，步骤时间线 |
-| 2026/5/18 | 实现启发式预加载模块 (prefetcher.py)：滑动窗口统计、共现矩阵、置信度判定、后台周期性预加载，有效提升伴随域名解析速度。 |
+| 2026/5/18 | 实现启发式预加载模块 (prefetcher.py)：滑动窗口统计、共现矩阵、置信度判定、后台周期性预加载，有效提升伴随域名解析速度 |
+| 2026/5/19 | Web 演示页面完善：修复 DGA 置信度展示、AI 面板置信度卡片、特征值如实显示、`transition: all` 性能优化、无障碍与键盘焦点 |
+| 2026/5/19 | 新增 `launch.bat` 一键启动脚本（服务器/GUI/Demo 菜单选择）；Demo API 日志与路径修复 |
 
