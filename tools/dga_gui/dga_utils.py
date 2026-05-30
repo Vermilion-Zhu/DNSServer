@@ -12,7 +12,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from config import DGA_THRESHOLD, is_whitelisted
+from config import DGA_THRESHOLD
 
 _dga_runtime = None
 _DGA_AVAILABLE = False

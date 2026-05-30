@@ -90,25 +90,73 @@ class ConsoleHandler:
 class WidgetHandler:
     """Append log lines to a tkinter ScrolledText widget.
 
-    Thread-safe: uses root.after(0, ...) to schedule inserts on the
-    main thread, avoiding tkinter threading issues.
+    Thread-safe: buffers incoming lines and flushes them to the widget
+    in batches.  Also caps total lines to prevent tkinter Text widget
+    performance from degrading after long-running sessions.
     """
+
+    _MAX_LINES = 2000          # keep at most this many lines visible
+    _TRIM_TO = 1500            # trim down to this many when exceeded
 
     def __init__(self, widget, root):
         self.widget = widget
         self.root = root
+        self._lock = threading.Lock()
+        self._buffer: list[str] = []
+        self._flush_scheduled = False
 
     def __call__(self, line: str):
-        def _insert():
+        with self._lock:
+            self._buffer.append(line)
+
+        if not self._flush_scheduled:
+            self._flush_scheduled = True
+            self.root.after(0, self._flush)
+
+    def _flush(self):
+        lines: list[str]
+        with self._lock:
+            lines = self._buffer[:]
+            self._buffer.clear()
+            self._flush_scheduled = False
+
+        if not lines:
+            return
+
+        with self._lock:
+            if self._buffer:
+                self._flush_scheduled = True
+                self.root.after(0, self._flush)
+
+        try:
+            self.widget.configure(state="normal")
+
+            # Cap total lines: if the widget already has too many,
+            # delete the oldest ones before appending.
+            # Tkinter "1.0" = line 1 col 0, "end-1c" = last char.
+            # Count approximate lines (cheap heuristic – faster than
+            # asking the widget for an exact count on every flush).
+            current_end = self.widget.index("end-1c")
+            current_line = int(current_end.split(".")[0]) if current_end != "1.0" else 1
+
+            new_text = "\n".join(lines) + "\n"
+            self.widget.insert("end", new_text)
+
+            # Trim if total exceeds MAX_LINES
+            if current_line + len(lines) > self._MAX_LINES:
+                # Delete oldest lines, keeping the most recent TRIM_TO
+                excess = current_line + len(lines) - self._TRIM_TO
+                if excess > 0:
+                    self.widget.delete("1.0", f"{excess + 1}.0")
+
+            # Scroll to bottom only if user was already at the bottom
             try:
-                self.widget.configure(state="normal")
-                self.widget.insert("end", line + "\n")
-                self.widget.see("end")
-                self.widget.configure(state="disabled")
+                if self.widget.yview()[1] == 1.0:
+                    self.widget.see("end")
             except Exception:
                 pass
-        try:
-            self.root.after(0, _insert)
+
+            self.widget.configure(state="disabled")
         except Exception:
             pass
 
