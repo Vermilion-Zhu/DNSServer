@@ -24,4 +24,5 @@ docs/*.lot
 docs/*.bcf
 docs/*.run.xml
 docs/*.pdf
+docs/*.listing
 !docs/report.pdf
