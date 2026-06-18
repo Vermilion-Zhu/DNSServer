@@ -13,8 +13,9 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from config import DGA_THRESHOLD, is_whitelisted, PORT, ADDRESS as DNS_SERVER_ADDRESS
+from config import PORT, ADDRESS as DNS_SERVER_ADDRESS
 
+_QTYPE_MAP_INT = {"A": 1, "AAAA": 28, "MX": 15, "TXT": 16, "CNAME": 5, "NS": 2, "SOA": 6, "PTR": 12}
 
 
 # Lazy singletons
@@ -67,7 +68,6 @@ def dns_query(qname: str, qtype: str = "A", server: str = "8.8.8.8",
     """
     # 1. Negative cache lookup (RFC 2308 NXDOMAIN)
     if use_cache and _ensure_cache():
-        _QTYPE_MAP_INT = {"A": 1, "AAAA": 28, "MX": 15, "TXT": 16, "CNAME": 5, "NS": 2, "SOA": 6, "PTR": 12}
         qtype_int = _QTYPE_MAP_INT.get(qtype, 1)
         qname_dot = qname if qname.endswith(".") else qname + "."
         neg = _dns_cache.get_negative(qname_dot, qtype_int)
@@ -130,8 +130,7 @@ def _cache_records(resp, qname: str, qtype: str = "A"):
     Mirrors simpleServer.add_records() logic + negative cache support.
     """
     import dns.rcode
-    _QTYPE_MAP = {"A": 1, "AAAA": 28, "MX": 15, "TXT": 16, "CNAME": 5, "NS": 2, "SOA": 6, "PTR": 12}
-    qtype_int = _QTYPE_MAP.get(qtype, 1)
+    qtype_int = _QTYPE_MAP_INT.get(qtype, 1)
     try:
         qname_dot = qname if qname.endswith(".") else qname + "."
 
@@ -200,10 +199,19 @@ def cache_stats():
         import time
         now = int(time.time())
         conn = _dns_cache.conn
-        total = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
-        active = conn.execute("SELECT COUNT(*) FROM cache WHERE expire > ?", (now,)).fetchone()[0]
+        total_pos = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+        active_pos = conn.execute("SELECT COUNT(*) FROM cache WHERE expire > ?", (now,)).fetchone()[0]
+        total_neg = conn.execute("SELECT COUNT(*) FROM neg_cache").fetchone()[0]
+        active_neg = conn.execute("SELECT COUNT(*) FROM neg_cache WHERE expire > ?", (now,)).fetchone()[0]
         rows = conn.execute("SELECT domain, qtype, rdata, expire FROM cache ORDER BY expire DESC LIMIT 20").fetchall()
-        return {"total": total, "active": active, "expired": total - active, "now": now, "rows": rows}
+        return {
+            "total": total_pos + total_neg,
+            "active": active_pos + active_neg,
+            "expired": (total_pos - active_pos) + (total_neg - active_neg),
+            "pos_total": total_pos, "pos_active": active_pos,
+            "neg_total": total_neg, "neg_active": active_neg,
+            "now": now, "rows": rows,
+        }
     except Exception:
         return None
 

@@ -524,14 +524,30 @@ class DGAGuiApp:
         self._set_busy()
 
         def _do():
+            # 1. DNS query (network I/O – already backgrounded)
             resp, text, hit = dns_query(domain, qtype, DNS_SERVER_ADDRESS, port=DNS_SERVER_PORT, use_cache=use_cache)
             if self._cancel_event.is_set():
                 self.root.after(0, self._set_idle)
                 return
-            self.root.after(0, lambda: self._on_dns_done(domain, resp, text, thr, hit, use_wl))
+
+            # 2. DGA detection (CPU-heavy: model load + feature extraction + inference)
+            #    Do it HERE in the background thread so it never blocks the GUI.
+            qname_dot = domain if domain.endswith(".") else domain + "."
+            whitelisted = use_wl and is_whitelisted(qname_dot)
+            if whitelisted:
+                is_dga, score = None, None
+            else:
+                is_dga, score = check_dga(domain, thr)
+                if score is not None and not isinstance(score, str):
+                    logger.info("DGA", f"{domain} → {float(score):.4f} ({'DGA' if is_dga else '正常'})")
+
+            self.root.after(0, lambda: self._on_dns_done(
+                domain, resp, text, thr, hit, use_wl, whitelisted, is_dga, score))
+
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_dns_done(self, domain, resp, text, thr, cache_hit, use_wl):
+    def _on_dns_done(self, domain, resp, text, thr, cache_hit, use_wl,
+                     whitelisted=False, is_dga=None, score=None):
         self._set_idle()
         self._set_dns(text)
         neg_cache = cache_hit and text and "NEG CACHE HIT" in text
@@ -555,13 +571,13 @@ class DGAGuiApp:
             logger.info("QUERY", "DNS 查询完成 (已缓存)")
         else:
             logger.warn("QUERY", "DNS 失败")
-        qname_dot = domain if domain.endswith(".") else domain + "."
-        if use_wl and is_whitelisted(qname_dot):
-            logger.info("WHITELIST", domain); self._set_dga_single(domain, None, False, True); return
-        is_dga, score = check_dga(domain, thr)
-        if score is not None and not isinstance(score, str):
-            logger.info("DGA", f"{domain} → {float(score):.4f} ({'DGA' if is_dga else '正常'})")
-        self._set_dga_single(domain, score, is_dga)
+
+        # Display DGA result (already computed in background thread)
+        if whitelisted:
+            logger.info("WHITELIST", domain)
+            self._set_dga_single(domain, None, False, True)
+        else:
+            self._set_dga_single(domain, score, is_dga)
 
     def _run_batch(self):
         if self._task_running:
@@ -592,6 +608,9 @@ class DGAGuiApp:
             dns_results = {}
             dns_cache_hits = {}
             total = len(domains)
+            # 进度更新节流：避免每次循环都 root.after 塞爆主线程
+            _last_progress_update = 0.0
+            _PROGRESS_INTERVAL = 0.2  # 200ms 内不重复更新
             for i, d in enumerate(domains):
                 if self._cancel_event.is_set():
                     logger.info("BATCH", f"任务已取消 (已完成 {i}/{total})")
@@ -629,8 +648,11 @@ class DGAGuiApp:
                 except Exception:
                     dns_results[d] = "—"
                     dns_cache_hits[d] = None
-                # 更新进度
-                self.root.after(0, lambda cur=i + 1, tot=total: self._update_progress(cur, tot))
+                # 进度更新节流
+                now = time.time()
+                if now - _last_progress_update >= _PROGRESS_INTERVAL or i == 0 or i == total - 1:
+                    _last_progress_update = now
+                    self.root.after(0, lambda cur=i + 1, tot=total: self._update_progress(cur, tot))
 
             cancelled = self._cancel_event.is_set()
             self.root.after(0, lambda: self._on_batch_done(

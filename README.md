@@ -6,27 +6,42 @@
 
 ## 📋 目录
 
-- [项目简介](#项目简介)
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [核心模块详解](#核心模块详解)
-  - [DNS 服务器核心](#1-dns-服务器核心--simpleserverpy)
-  - [DNS 缓存层](#2-dns-缓存层--dns_cachepy)
-  - [共享配置中心](#3-共享配置中心--configpy)
-  - [统一日志模块](#4-统一日志模块--loggerpy)
-  - [DGA 检测模块](#5-dga-检测模块--model_training)
-  - [GUI 可视化工具](#6-gui-可视化工具--toolsdga_gui)
-  - [DNS 命令行客户端](#7-dns-命令行客户端--toolsdns_query)
-  - [启发式预加载模块](#8-启发式预加载模块--prefetcherpy)
-  - [Demo 演示系统（注：当前版本已移除）](#9-demo-演示系统--toolsdemo_apipy--docsdemohtml)
-- [数据流与处理流程](#数据流与处理流程)
-- [快速开始](#快速开始)
-  - [验证预加载效果](#验证预加载效果)
-- [配置说明](#配置说明)
-  - [预加载器配置](#预加载器配置)
-- [模型训练](#模型训练)
-- [项目特点](#项目特点)
-- [开发历史](#开发历史)
+- [DNSServer 项目说明文档](#dnsserver-项目说明文档)
+  - [📋 目录](#-目录)
+  - [项目简介](#项目简介)
+  - [技术栈](#技术栈)
+  - [项目结构](#项目结构)
+  - [核心模块详解](#核心模块详解)
+    - [1. DNS 服务器核心 — `simpleServer.py`](#1-dns-服务器核心--simpleserverpy)
+    - [2. DNS 缓存层 — `dns_cache.py`](#2-dns-缓存层--dns_cachepy)
+    - [3. 共享配置中心 — `config.py`](#3-共享配置中心--configpy)
+    - [4. 统一日志模块 — `logger.py`](#4-统一日志模块--loggerpy)
+    - [5. DGA 检测模块 — `model_training/`](#5-dga-检测模块--model_training)
+      - [5.1 特征工程 — `train_dga_model.py`](#51-特征工程--train_dga_modelpy)
+      - [5.2 推理运行时 — `dga_runtime.py`](#52-推理运行时--dga_runtimepy)
+      - [5.3 推理基准测试 — `bench_inference.py`](#53-推理基准测试--bench_inferencepy)
+    - [6. GUI 可视化工具 — `tools/dga_gui/`](#6-gui-可视化工具--toolsdga_gui)
+    - [7. DNS 命令行客户端 — `tools/dns_query/dns_client.py`](#7-dns-命令行客户端--toolsdns_querydns_clientpy)
+    - [8. 启发式预加载模块 — `prefetcher.py`](#8-启发式预加载模块--prefetcherpy)
+    - [9. Demo 演示系统 — `tools/demo_api.py` + `docs/demo.html`](#9-demo-演示系统--toolsdemo_apipy--docsdemohtml)
+  - [数据流与处理流程](#数据流与处理流程)
+  - [快速开始](#快速开始)
+    - [1. 安装依赖](#1-安装依赖)
+    - [2. 启动 DNS 服务器](#2-启动-dns-服务器)
+    - [3. 使用 GUI 工具（推荐）](#3-使用-gui-工具推荐)
+    - [4. 测试查询](#4-测试查询)
+    - [5. 运行测试脚本](#5-运行测试脚本)
+    - [6. 停止服务器](#6-停止服务器)
+    - [7. 一键启动（Windows）](#7-一键启动windows)
+    - [验证预加载效果](#验证预加载效果)
+  - [配置说明](#配置说明)
+    - [DNS 服务器配置](#dns-服务器配置)
+    - [DGA 检测配置](#dga-检测配置)
+    - [预加载器配置](#预加载器配置)
+    - [白名单配置](#白名单配置)
+  - [模型训练](#模型训练)
+  - [项目特点](#项目特点)
+  - [开发历史](#开发历史)
 
 ---
 
@@ -74,9 +89,8 @@ DNSServer/
 ├── requirements.txt             # 依赖清单
 ├── README.md                    # 本文档：项目说明
 ├── README_OLD.md                # 旧版开发日志（归档）
-├── test.bash                    # Linux 测试脚本
-├── wtest.ps1                    # Windows 测试脚本
-├── launch.bat                   # Windows 一键启动脚本（菜单选择）（[注]当前版本已移除）
+├── DNSServer.pptx               # 🖼️ 项目海报
+├── launch.bat                   # Windows 一键启动脚本（菜单选择）
 │
 ├── model_training/              # 🔵 DGA 模型训练与运行时
 │   ├── __init__.py
@@ -88,6 +102,12 @@ DNSServer/
 │   └── docs/
 │       ├── DGA_TRAINING_REPORT.md   # 训练报告
 │       └── MODEL_INTEGRATION.md     # 模型集成文档
+│
+├── test/                        # 🟠 DNS服务器测试文件
+│   ├── TEST_REPORT.md           #   测试报告
+│   ├── generate.py              #   恶意域名生成脚本
+│   ├── wtest.ps1                #   Windows 测试脚本
+│   ├── test.bash                #   Linux 测试脚本
 │
 ├── tools/
 │   ├── demo_api.py              # 🟠 演示 API：DNS 解析步骤可视化 API（[注]当前版本已移除）
@@ -715,7 +735,7 @@ python -m dnslib.client --server 127.0.0.1:5353 baidu.com AAAA
 **方式二：使用项目自带客户端**
 
 ```bash
-python tools/dns_query/dns_client.py @127.0.0.1 baidu.com A
+python tools/dns_query/dns_client.py -p 5353 "@127.0.0.1" baidu.com A
 ```
 
 **方式三：使用 GUI 工具**
@@ -729,17 +749,15 @@ python tools/dga_gui/dga_gui.py
 **Windows (PowerShell)：**
 
 ```powershell
-# 首次需更改执行策略（管理员权限）
-Set-ExecutionPolicy RemoteSigned
-./wtest.ps1
-# 实验完成后恢复
-Set-ExecutionPolicy Restricted
+# 在当前窗口设置临时脚本执行策略，实验完成后自动重置
+Set-ExecutionPolicy Bypass -Scope Process
+./test/wtest.ps1
 ```
 
 **Linux：**
 
 ```bash
-bash test.bash
+bash /test/test.bash
 ```
 
 ### 6. 停止服务器
@@ -875,4 +893,4 @@ python -m model_training.bench_inference --model artifacts/models/active/dga_mod
 | 2026/5/18 | 实现启发式预加载模块 (prefetcher.py)：滑动窗口统计、共现矩阵、置信度判定、后台周期性预加载，有效提升伴随域名解析速度 |
 | 2026/5/19 | Web 演示页面完善：修复 DGA 置信度展示、AI 面板置信度卡片、特征值如实显示、`transition: all` 性能优化、无障碍与键盘焦点 |
 | 2026/5/19 | 新增 `launch.bat` 一键启动脚本（服务器/GUI/Demo 菜单选择）；Demo API 日志与路径修复 |
-
+| 2026/6/8 | 新增项目海报`DNSServer.pptx`, 将测试文件、数据集和测试报告统一移至`test/`文件夹 |
