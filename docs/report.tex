@@ -1,0 +1,351 @@
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{left=2.5cm,right=2.5cm,top=3cm,bottom=3cm}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{float}
+
+% 颜色定义
+\definecolor{NavyBlue}{RGB}{0,51,102}
+\definecolor{SlateGray}{RGB}{112,128,144}
+\definecolor{LightGray}{RGB}{245,245,245}
+\definecolor{Charcoal}{RGB}{51,51,51}
+\definecolor{CodeGreen}{RGB}{0,128,0}
+\definecolor{CodePurple}{RGB}{128,0,128}
+
+% 超链接设置
+\hypersetup{
+    colorlinks=true,
+    linkcolor=NavyBlue,
+    filecolor=NavyBlue,      
+    urlcolor=NavyBlue,
+    citecolor=NavyBlue,
+}
+
+% 页面样式
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\color{SlateGray}\itshape 智能 DNS 服务器与 DGA 检测系统报告}
+\fancyhead[R]{\color{SlateGray}\thepage}
+\fancyfoot[C]{\color{SlateGray}\footnotesize \copyright~2026 DNSServer Project Team}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% 标题格式
+\titleformat{\section}{\color{NavyBlue}\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\color{NavyBlue}\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\color{NavyBlue}\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+% 代码列表设置
+\lstset{
+    backgroundcolor=\color{LightGray},
+    basicstyle=\ttfamily\small\color{Charcoal},
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    commentstyle=\color{CodeGreen}\itshape,
+    keepspaces=true,
+    keywordstyle=\color{NavyBlue}\bfseries,
+    numberstyle=\tiny\color{SlateGray},
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    stringstyle=\color{CodePurple},
+    tabsize=4,
+    frame=single,
+    rulecolor=\color{SlateGray!30},
+    language=Python
+}
+
+\begin{document}
+
+% ==================== 封面 ====================
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    {\Huge\bfseries\color{NavyBlue} 基于域名解析协议与机器学习的\\智能 DNS 拦截服务器} \\
+    \vspace{1.5cm}
+    {\large\color{SlateGray} 基于机器学习驱动与启发式缓存机制的高性能 DNS 解决方案} \\
+    \vspace{3cm}
+    \begin{minipage}{0.7\textwidth}
+        \centering
+        \large
+        \begin{tabular}{ll}
+            \textbf{作者：} & 第8小组：董子舒、陈佳旗、蒙俊豪、朱明睿
+        \end{tabular}
+    \end{minipage}
+    \vfill
+    \vspace{2cm}
+    {\color{SlateGray}\small 计算机网络课程期末大作业报告}
+\end{titlepage}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ==================== 1. 项目概述 ====================
+\section{项目概述与系统流程}
+本项目实现了一个基于 Python 的混合解析 DNS 服务器，不仅具备完整的标准 DNS 解析功能（包括正向 A/AAAA/CNAME 缓存与否定缓存），而且无缝集成了一个基于随机森林（Random Forest）和马尔可夫链（Markov Chain）特征工程的 DGA（Domain Generation Algorithm）恶意域名检测引擎。
+
+\subsection{系统整体工作流程}
+当 DNS 服务器（基于 \texttt{HybridResolver} 类）监听到客户端发送的 UDP 查询请求后，系统会按照如图~1~所示的顺序进行处理：
+
+\begin{enumerate}
+    \item \textbf{白名单检查}：首先对查询域名进行白名单匹配。若命中，则直接跳过 DGA 检测，防止对高频正常域名（如系统依赖的公共服务）产生误报。
+    \item \textbf{DGA AI 检测}：若域名不在白名单中，调用机器学习推理接口。如果判定为恶意 DGA 域名（概率值大于设定阈值，如 0.7），则执行 \textbf{Sinkhole 拦截}，即对 A 记录返回 \texttt{0.0.0.0}，对 AAAA 记录返回 \texttt{::}。
+    \item \textbf{缓存查询（含正/反向缓存）}：
+    \begin{itemize}
+        \item \textbf{否定缓存（Negative Cache）}：根据 RFC 2308 标准，若该域名近期被判定为不存在（NXDOMAIN），则直接向客户端返回包含 SOA 记录的 NXDOMAIN 响应。
+        \item \textbf{正向缓存}：从本地 SQLite 数据库检索域名和查询类型，如果命中且记录未过期，直接向客户端返回缓存的结果。
+        \item \textbf{CNAME 链递归查询}：若缓存中存在对应的 CNAME 记录，自动执行最大深度为 5 层的递归解析，直至找到最终的 A/AAAA 记录。
+    \end{itemize}
+    \item \textbf{上游 DNS 转发与缓存写入}：若本地缓存未命中，则将请求转发至配置的上游服务器（如 \texttt{8.8.8.8}）。当收到正常响应时，将其写入正向缓存；当收到 NXDOMAIN 响应时，提取其中的 SOA 记录并写入否定缓存中。
+    \item \textbf{启发式预加载（Prefetcher）}：该异步线程通过滑动窗口算法在线学习用户的访问习惯。若检测到 A 域名后常伴随 B 域名的查询，当用户访问 A 时，Prefetcher 将自动在后台向上游解析并更新 B 域名的缓存，降低用户后续访问的整体延迟。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[
+        node distance=1.0cm and 1.5cm,
+        startstop/.style={rectangle, rounded corners, draw=NavyBlue, fill=NavyBlue!5, text width=3.5cm, align=center, minimum height=0.8cm, font=\small\bfseries},
+        process/.style={rectangle, draw=SlateGray, fill=LightGray, text width=3.8cm, align=center, minimum height=0.8cm, font=\small},
+        decision/.style={diamond, aspect=1.8, draw=NavyBlue, fill=NavyBlue!10, text width=2.2cm, align=center, inner sep=0pt, font=\small},
+        arrow/.style={thick,-{Stealth[scale=1.0]},color=Charcoal}
+    ]
+        % Nodes (Main vertical column)
+        \node (start) [startstop] {客户端 DNS 请求输入};
+        \node (white) [decision, below=of start] {是否在白名单中？};
+        \node (dga) [decision, below=of white, yshift=-0.2cm] {是否判定为 DGA？};
+        \node (cache) [decision, below=of dga, yshift=-0.2cm] {本地缓存命中？};
+        \node (forward) [process, below=of cache] {向外部上游 DNS 转发};
+        \node (save) [process, below=of forward] {存入本地 SQLite 数据库};
+        \node (return) [startstop, below=of save, yshift=-0.2cm] {返回解析结果给客户端};
+        
+        % Nodes (Branches)
+        \node (sink) [process, right=of dga, xshift=1.5cm] {返回 Sinkhole 响应\\(0.0.0.0 / ::)};
+        
+        % Connections
+        \draw [arrow] (start) -- (white);
+        \draw [arrow] (white) -- node[left] {否} (dga);
+        \draw [arrow] (white.west) -- node[above] {是} ($(white.west) + (-1.5,0)$) |- (cache.west);
+        \draw [arrow] (dga) -- node[above] {是} (sink);
+        \draw [arrow] (dga) -- node[left] {否} (cache);
+        \draw [arrow] (cache) -- node[left] {否} (forward);
+        \draw [arrow] (cache.east) -- node[above] {是} ($(cache.east) + (2.2,0)$) |- (return.east);
+        \draw [arrow] (forward) -- (save);
+        \draw [arrow] (save) -- (return);
+        \draw [arrow] (sink.east) -- ($(sink.east) + (1.0,0)$) |- (return.east);
+    \end{tikzpicture}
+    \caption{DNS 服务器解析与拦截系统整体流程图}
+    \label{fig:workflow}
+\end{figure}
+
+\newpage
+
+% ==================== 2. DNS 报文结构 ====================
+\section{DNS 报文结构与协议解析}
+标准 DNS 协议报文结构由五个部分组成：头部（Header）、问题区（Question）、回答区（Answer）、授权区（Authority）以及附加信息区（Additional）。
+
+\subsection{DNS 报文头部结构}
+DNS 报文头部共占用 12 字节（96 比特）。其精确的二进制比特位排版结构如图~2~所示：
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[x=0.75cm, y=-0.85cm]
+        % 网格线与边框
+        \draw[thick, color=NavyBlue] (0,0) rectangle (16,6);
+        \foreach \i in {1,...,5} {
+            \draw[color=NavyBlue!40] (0,\i) -- (16,\i);
+        }
+        
+        % 比特序号标注
+        \foreach \x in {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15} {
+            \node[above, scale=0.75, color=SlateGray] at (\x+0.5, 0) {\x};
+        }
+        
+        % 单元格划分
+        \draw[thick, color=NavyBlue] (1,1) -- (1,2);
+        \draw[thick, color=NavyBlue] (5,1) -- (5,2);
+        \draw[thick, color=NavyBlue] (6,1) -- (6,2);
+        \draw[thick, color=NavyBlue] (7,1) -- (7,2);
+        \draw[thick, color=NavyBlue] (8,1) -- (8,2);
+        \draw[thick, color=NavyBlue] (9,1) -- (9,2);
+        \draw[thick, color=NavyBlue] (12,1) -- (12,2);
+        
+        % 各字段文本
+        \node[font=\small] at (8, 0.5) {会话事务标识符 (Transaction ID) --- 16 bits};
+        
+        \node[font=\footnotesize] at (0.5, 1.5) {QR};
+        \node[font=\footnotesize] at (3, 1.5) {Opcode (4)};
+        \node[font=\footnotesize] at (5.5, 1.5) {AA};
+        \node[font=\footnotesize] at (6.5, 1.5) {TC};
+        \node[font=\footnotesize] at (7.5, 1.5) {RD};
+        \node[font=\footnotesize] at (8.5, 1.5) {RA};
+        \node[font=\footnotesize] at (10.5, 1.5) {Z (3)};
+        \node[font=\footnotesize] at (14, 1.5) {RCODE (4)};
+        
+        \node[font=\small] at (8, 2.5) {问题记录计数 (QDCOUNT / Question Count) --- 16 bits};
+        \node[font=\small] at (8, 3.5) {回答记录计数 (ANCOUNT / Answer Count) --- 16 bits};
+        \node[font=\small] at (8, 4.5) {授权记录计数 (NSCOUNT / Authority Count) --- 16 bits};
+        \node[font=\small] at (8, 5.5) {附加记录计数 (ARCOUNT / Additional Count) --- 16 bits};
+        
+        % 位宽刻度
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 0.5) {Byte 0-1};
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 1.5) {Byte 2-3};
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 2.5) {Byte 4-5};
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 3.5) {Byte 6-7};
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 4.5) {Byte 8-9};
+        \node[right, font=\tiny\itshape, color=SlateGray] at (16, 5.5) {Byte 10-11};
+    \end{tikzpicture}
+    \caption{DNS 报文头部二进制比特排版结构图}
+    \label{fig:dns_header}
+\end{figure}
+
+\subsubsection{头部核心字段解析说明}
+\begin{itemize}
+    \item \textbf{Transaction ID}：16比特的序列号，用于客户端匹配对应的 DNS 响应。
+    \item \textbf{QR (Query/Response Flag)}：0 表示查询报文，1 表示响应报文。
+    \item \textbf{Opcode}：4比特，指示查询类型。0 表示标准查询（QUERY），1 表示反向查询（IQUERY）。
+    \item \textbf{AA (Authoritative Answer)}：仅在响应报文中有效，表示响应的服务器是该域名的权威解析服务器。
+    \item \textbf{TC (Truncated)}：表示报文是否由于长度超过 512 字节而被截断。若截断，客户端通常改用 TCP 重新查询。
+    \item \textbf{RD (Recursion Desired)}：期望递归标志。由客户端设置，请求服务器使用递归解析。
+    \item \textbf{RA (Recursion Available)}：允许递归标志。由服务端在响应中设置，表示其是否支持递归查询。
+    \item \textbf{Z}：保留字段，在现代 DNS 协议中被重新拆分为安全扩展等其他标志位。
+    \item \textbf{RCODE (Response Code)}：4比特返回码。例如：0 (NOERROR, 成功)、3 (NXDOMAIN, 域名不存在)、2 (SERVFAIL, 内部错误)。
+\end{itemize}
+
+\subsection{DNS 报文体结构}
+报文体紧随头部。其主要包含两种格式类型：问题字段与资源记录（Resource Record, RR）字段。
+\begin{enumerate}
+    \item \textbf{问题记录格式（Question Section）}：
+    \begin{itemize}
+        \item \textbf{QNAME}：变长域名。采用标签计数表示法（例如 \texttt{www.baidu.com} 表示为 \texttt{03 77 77 77 05 62 61 69 64 75 03 63 6f 6d 00}）。
+        \item \textbf{QTYPE}：2字节。表示查询的记录类型，如 A (1)、AAAA (28)、CNAME (5)、MX (15)。
+        \item \textbf{QCLASS}：2字节。通常为 IN (1)，表示 Internet 类别。
+    \end{itemize}
+    \item \textbf{资源记录格式（Answer/Authority/Additional Sections）}：
+    所有的返回记录均符合 RR 的统一结构格式：
+    $$\text{RR} = \{ \text{NAME}, \text{TYPE}, \text{CLASS}, \text{TTL}, \text{RDLENGTH}, \text{RDATA} \}$$
+    其中，\textbf{RDATA}（资源数据）的内部结构根据 TYPE 改变。例如 A 记录的 RDATA 是 4 字节的 IPv4 地址；CNAME 记录则是变长域名。
+\end{enumerate}
+
+\newpage
+
+% ==================== 3. 特征工程 ====================
+\section{DGA 恶意域名检测模型特征工程}
+DGA（域名生成算法）生成的恶意域名常在字符分布和词法结构上表现出高随机性。为了让机器学习分类器高效判别域名是否为 DGA，特征提取模块共提取了 \textbf{3大类、总计261维} 特征。
+
+\subsection{基础词法特征（5维）}
+\begin{enumerate}
+    \item \textbf{域名主体长度 (Length)}：DGA 域名为了降低碰撞概率，通常长度偏长。
+    \item \textbf{元音字母比例 (Vowel Ratio)}：元音字母（a, e, i, o, u）占主体的比例。DGA 域名的元音比例一般明显低于英文单词的均值。
+    \item \textbf{数字比例 (Digit Ratio)}：域名主体中数字出现的频次比例。部分 DGA 生成算法喜欢掺杂大量数字。
+    \item \textbf{最大连续辅音长度 (Max Consonant Run)}：DGA 域名极易出现大段没有元音字母隔开的辅音字母串。
+    \item \textbf{Shannon 信息熵 (Shannon Entropy)}：
+    用于度量域名主体的字符随机复杂程度。假设域名包含的不同字符集合为 $\mathcal{C}$，每个字符 $c_i \in \mathcal{C}$ 出现的概率为 $P(c_i)$，则其 Shannon 信息熵定义为：
+    \begin{equation}
+        H = - \sum_{c_i \in \mathcal{C}} P(c_i) \log_2 P(c_i)
+    \end{equation}
+    信息熵越大，表明域名主体的乱序无规规律度越高，DGA 概率越大。
+\end{enumerate}
+
+\subsection{N-gram 局部哈希桶统计（256维）}
+为了捕捉域名局部的字符搭配模式而又不引入稀疏膨胀的大维度，模型引入了特征哈希（Feature Hashing）机制：
+\begin{itemize}
+    \item 提取所有 2-gram（滑动窗口为 2 的字符对）和 3-gram。
+    \item 对提取出的字符片段利用 MD5 哈希计算其特征映射值。
+    \item 将哈希映射值模以桶的个数（新模型设置为 \texttt{ngram\_buckets = 128} 或 \texttt{64}），分别将其统计累加到 128 维特征向量的相应分桶中。
+\end{itemize}
+
+\subsection{马尔可夫链转移概率特征（4维）}
+马尔可夫特征从语言学可读性特征对分类进行强力补充。我们在百万级白样本（Tranco Top 1M）的域名主体中，在线统计了由字符 $c_i$ 转移到字符 $c_j$ 的频次，并基于拉普拉斯平滑（Laplace Smoothing）拟合了一个一阶字符转移概率矩阵 $\mathbf{P}$。字符的条件转移概率计算如下：
+\begin{equation}
+    P(c_j | c_i) = \frac{\text{Count}(c_i c_j) + \alpha}{\sum_{k} \left( \text{Count}(c_i c_k) + \alpha \right)}
+\end{equation}
+在推理时，对于待预测域名串 $S = c_1 c_2 \dots c_L$，模型提取以下4维数值特征：
+\begin{enumerate}
+    \item \textbf{平均转移对数概率 (avg\_logp)}：
+    \begin{equation}
+        \text{avg\_logp} = \frac{1}{L - 1} \sum_{k=1}^{L-1} \log_{10} P(c_{k+1} | c_k)
+    \end{equation}
+    DGA 域名的平均对数概率往往显著小于正常域名。
+    \item \textbf{最小转移对数概率 (min\_logp)}：
+    \begin{equation}
+        \text{min\_logp} = \min_{k} \log_{10} P(c_{k+1} | c_k)
+    \end{equation}
+    检测域名串中最不可读、最突兀的单处字符跳转行为。
+    \item \textbf{低概率转移占比 (low\_prob\_ratio)}：
+    统计域名转移概率低于预设阈值（例如 $10^{-3}$）的转换次数占总转移次数的比例。
+    \item \textbf{字符混淆度/困惑度 (Perplexity)}：
+    \begin{equation}
+        \text{Perplexity} = 10^{-\text{avg\_logp}}
+    \end{equation}
+\end{enumerate}
+
+实验证明（见表~1），在增加了 4 维马尔可夫特征后，模型的性能获得了巨大飞跃，说明了字符序列建模对于恶意域名识别的强效价值。
+
+\begin{table}[H]
+    \centering
+    \color{Charcoal}
+    \caption{马尔可夫特征引入与轻量化 v2 的 A/B 测试对比（采样数：100,000/类）}
+    \vspace{0.2cm}
+    \begin{tabularx}{\textwidth}{lXXX}
+        \toprule
+        \textbf{核心指标} & \textbf{Baseline (仅基础+n-gram)} & \textbf{Markov 增强方案} & \textbf{变化差值} \\
+        \midrule
+        系统精确率 (Accuracy) & 0.9331 & \textbf{0.9586} & +0.0255 \\
+        宏观 F1 值 (Macro F1) & 0.9331 & \textbf{0.9585} & +0.0254 \\
+        ROC AUC 曲线下面积 & 0.9822 & \textbf{0.9912} & +0.0090 \\
+        DGA 召回率 (Class 1 Recall) & 0.9203 & \textbf{0.9512} & +0.0309 \\
+        外部白样本误报率 (FPR) & 4.8290\% & \textbf{3.1680\%} & -1.6610 pct \\
+        \bottomrule
+    \end{tabularx}
+    \label{tab:ab_test}
+\end{table}
+
+\newpage
+
+% ==================== 4. 运行说明 ====================
+\section{系统部署与自测指南}
+
+\subsection{DNS 服务端一键启动}
+可使用 Python 直接启动或配合命令行参数覆盖默认上游 DNS 服务器：
+\begin{lstlisting}[language=bash]
+# 使用默认上游 8.8.8.8 启动 DNS 解析服务器
+python simpleServer.py
+
+# 指定特定上游，例如阿里 DNS
+python simpleServer.py --upstream 223.5.5.5
+\end{lstlisting}
+
+\subsection{客户端工具调试自测}
+可以使用命令行客户端工具向本地监听的 `5353` 端口发起测试：
+\begin{lstlisting}[language=bash]
+# 1. 验证正常域名是否可以被解析（预期成功，通过DGA检测）
+python tools/dns_query/dns_client.py @127.0.0.1 www.google.com A -p 5353
+
+# 2. 验证随机DGA恶意域名是否被正常拦截（预期返回 Sinkhole A 记录 0.0.0.0）
+python tools/dns_query/dns_client.py @127.0.0.1 eqwzjxk.com A -p 5353
+\end{lstlisting}
+
+对于需要进行可视化的调试场景，可以通过桌面客户端快速运行：
+\begin{lstlisting}[language=bash]
+# 启动 GUI 可视化管理客户端（会自动在后台拉起 DNS 解析服务器进程）
+python tools/dga_gui/dga_gui.py
+\end{lstlisting}
+
+\end{document}

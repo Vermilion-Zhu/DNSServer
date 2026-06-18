@@ -7,3 +7,14 @@ __pycache__/
 model_training/__pycache__/
 tools/dga_gui/__pycache__/
 tools/dns_query/__pycache__/
+.vscode/
+
+# LaTeX build outputs and temporary files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.pdf

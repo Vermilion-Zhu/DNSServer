@@ -18,7 +18,7 @@
   - [GUI 可视化工具](#6-gui-可视化工具--toolsdga_gui)
   - [DNS 命令行客户端](#7-dns-命令行客户端--toolsdns_query)
   - [启发式预加载模块](#8-启发式预加载模块--prefetcherpy)
-  - [Demo 演示系统](#9-demo-演示系统--toolsdemo_apy--docsdemohtml)
+  - [Demo 演示系统（注：当前版本已移除）](#9-demo-演示系统--toolsdemo_apipy--docsdemohtml)
 - [数据流与处理流程](#数据流与处理流程)
 - [快速开始](#快速开始)
   - [验证预加载效果](#验证预加载效果)
@@ -76,20 +76,21 @@ DNSServer/
 ├── README_OLD.md                # 旧版开发日志（归档）
 ├── test.bash                    # Linux 测试脚本
 ├── wtest.ps1                    # Windows 测试脚本
-├── launch.bat                   # Windows 一键启动脚本（菜单选择）
+├── launch.bat                   # Windows 一键启动脚本（菜单选择）（[注]当前版本已移除）
 │
 ├── model_training/              # 🔵 DGA 模型训练与运行时
 │   ├── __init__.py
 │   ├── train_dga_model.py       #   特征提取 + 模型训练脚本
 │   ├── dga_runtime.py           #   推理运行时（单条/批量预测）
 │   ├── bench_inference.py       #   推理性能基准测试
+│   ├── classifier.py            #   基于启发式规则的 DGA 检测器（基线/测试）
 │   ├── README.md                #   模型训练说明
 │   └── docs/
 │       ├── DGA_TRAINING_REPORT.md   # 训练报告
 │       └── MODEL_INTEGRATION.md     # 模型集成文档
 │
 ├── tools/
-│   ├── demo_api.py              # 🟠 演示 API：DNS 解析步骤可视化 API
+│   ├── demo_api.py              # 🟠 演示 API：DNS 解析步骤可视化 API（[注]当前版本已移除）
 │   ├── dga_gui/                 # 🟣 GUI 可视化工具
 │   │   ├── __init__.py
 │   │   ├── dga_gui.py           #   tkinter 主界面
@@ -104,7 +105,8 @@ DNSServer/
 │       └── train_prefetch.py    #   prefetch测试
 │
 ├── docs/
-│   └── demo.html                # 🎬 DNS 解析动画演示（纯静态 HTML）
+│   ├── demo.html                # 🎬 DNS 解析动画演示（纯静态 HTML）（[注]当前版本已移除）
+│   └── report.tex               # 📄 LaTeX 课程大作业排版报告源文件
 │
 └── artifacts/                   # 📦 模型产物
     └── models/
@@ -375,7 +377,7 @@ def _read_stdout():
 
 ### 5. DGA 检测模块 — `model_training/`
 
-#### 4.1 特征工程 — `train_dga_model.py`
+#### 5.1 特征工程 — `train_dga_model.py`
 
 从域名中提取多维度特征用于机器学习分类：
 
@@ -395,7 +397,7 @@ def _read_stdout():
 
 **域名预处理：** `normalize_domain()` — 小写化、去末尾点号、正则校验、长度限制（4~50）
 
-#### 4.2 推理运行时 — `dga_runtime.py`
+#### 5.2 推理运行时 — `dga_runtime.py`
 
 提供单条和批量 DGA 检测接口，支持模型懒加载与缓存：
 
@@ -415,7 +417,7 @@ def _read_stdout():
 
 **当前活跃模型：** `artifacts/models/active/dga_model_light_markov_100k_v2.pkl`
 
-#### 4.3 推理基准测试 — `bench_inference.py`
+#### 5.3 推理基准测试 — `bench_inference.py`
 
 测量模型推理性能，支持批量推理和 warmup，输出 QPS 和平均延迟。
 
@@ -562,6 +564,9 @@ class HybridResolver:
 ```
 ---
 ### 9. Demo 演示系统 — `tools/demo_api.py` + `docs/demo.html`
+
+> [!IMPORTANT]
+> 当前版本（v1.1）移除了该 Web Demo 演示系统相关的 `tools/demo_api.py` 和 `docs/demo.html` 文件，本部分内容仅供参考。
 
 独立的 Web 演示系统，用动画展示 DNS 解析全流程，无需真实 DNS 服务器运行。
 
@@ -744,10 +749,8 @@ bash test.bash
 
 ### 7. 一键启动（Windows）
 
-```bash
-# 双击项目根目录下的 launch.bat，菜单选择启动
-launch.bat
-```
+> [!NOTE]
+> 当前版本（v1.1）移除了 `launch.bat` 脚本，请使用下述命令行或直接运行 GUI 工具启动项目。
 
 ### 验证预加载效果
 
