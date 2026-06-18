@@ -10,11 +10,18 @@ tools/dns_query/__pycache__/
 .vscode/
 
 # LaTeX build outputs and temporary files
-*.aux
-*.log
-*.out
-*.toc
-*.synctex.gz
-*.fdb_latexmk
-*.fls
-*.pdf
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
+docs/*.synctex.gz
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.bbl
+docs/*.blg
+docs/*.lof
+docs/*.lot
+docs/*.bcf
+docs/*.run.xml
+docs/*.pdf
+!docs/report.pdf
