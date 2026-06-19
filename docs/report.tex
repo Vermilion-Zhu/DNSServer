@@ -574,4 +574,49 @@ python tools/dns_query/dns_client.py @127.0.0.1 eqwzjxk.com A -p 5353
 python tools/dga_gui/dga_gui.py
 \end{codecard}
 
+\newpage
+
+% ==================== 6. 系统实际运行与抓包演示 ====================
+\section{系统实际运行与抓包演示}
+为了验证系统在真实网络环境下的协议行为与防御效果，我们进行了实际运行测试，并使用 Wireshark 对解析流程与拦截效果进行了抓包捕获。
+
+\subsection{域名递归解析与本地缓存抓包验证}
+我们通过对同一正常域名进行连续两次查询，验证了递归转发与本地缓存的生效情况：
+\begin{enumerate}
+    \item \textbf{首次查询（递归解析）}：如图~\ref{fig:demo_query1}~所示，由于缓存为空，本地 DNS 服务器将查询转发给上游，完成完整的递归解析链条。
+    \item \textbf{二次查询（缓存命中）}：如图~\ref{fig:demo_query2}~所示，再次查询时，服务器直接通过本地数据库秒回客户端，WLAN 物理网卡无任何外网转发流量，且响应报文的 TTL 发生递减（如图~\ref{fig:demo_response1}~所示）。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/demo_query1.png}
+    \caption{首次查询触发递归解析与上游转发抓包}
+    \label{fig:demo_query1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/demo_query2.png}
+    \caption{二次查询本地缓存命中抓包（无外网流量）}
+    \label{fig:demo_query2}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/demo_response1.png}
+    \caption{DNS 响应包中缓存记录与 TTL 生效细节}
+    \label{fig:demo_response1}
+\end{figure}
+
+\subsection{DGA 恶意域名 AI 识别与拦截验证}
+我们针对典型的 DGA 恶意域名（如 \texttt{eqwzjxk.com}）进行了现场查询测试。
+如图~\ref{fig:demo_dga}~所示，当本地 DNS 服务器接收到该查询后，AI 推理引擎实时计算出高概率的 DGA 置信度，直接触发 Sinkhole 拦截机制，在本地对 A 记录直接回复 \texttt{0.0.0.0}，成功从协议层面阻断了客户端的恶意连接。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/demo_dga.png}
+    \caption{DGA 恶意域名被 AI 识别并拦截至 0.0.0.0 抓包}
+    \label{fig:demo_dga}
+\end{figure}
+
 \end{document}
